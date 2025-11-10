@@ -27,10 +27,10 @@ backend/.coverage
 backend/.pytest_cache/
 backend/.mypy_cache/
 
-# Local runtime data
-models/
-indexes/
-data/
+# Local runtime data (root-level only)
+/models/
+/indexes/
+/data/
 .env
 .env.*
 
