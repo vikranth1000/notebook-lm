@@ -15,7 +15,11 @@ async def chat_endpoint(request: Request, payload: ChatRequest) -> ChatResponse:
     if payload.history:
         history = [ChatMessage(role=msg.role, content=msg.content) for msg in payload.history]
     try:
-        reply = await service.generate_reply(prompt=payload.prompt, history=history)
+        reply = await service.generate_reply(
+            prompt=payload.prompt,
+            history=history,
+            notebook_id=payload.notebook_id,
+        )
         return ChatResponse(reply=reply, provider=service.provider)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

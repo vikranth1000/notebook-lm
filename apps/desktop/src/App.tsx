@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 
-import { fetchConfig, sendChatMessage } from './api';
+import { fetchConfig, sendChatMessage, uploadDocument } from './api';
 import type { BackendConfig, ChatMessage } from './types';
 import ReactMarkdown from 'react-markdown';
 
@@ -14,8 +14,12 @@ function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [notebookId, setNotebookId] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -80,6 +84,7 @@ function App() {
       const response = await sendChatMessage({
         prompt: userMessage.content,
         history: messages.map((m) => ({ role: m.role, content: m.content })),
+        notebook_id: notebookId,
       });
 
       const assistantMessage: ChatMessage = { role: 'assistant', content: response.reply };
@@ -93,6 +98,31 @@ function App() {
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setUploadStatus('Uploading and processing document...');
+
+    try {
+      const result = await uploadDocument(file, notebookId || undefined);
+      setNotebookId(result.notebook_id);
+      setUploadStatus(
+        `✅ Document processed! ${result.documents_processed} document(s), ${result.chunks_indexed} chunk(s) indexed.`,
+      );
+      setTimeout(() => setUploadStatus(null), 5000);
+    } catch (error) {
+      setUploadStatus(`❌ Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setTimeout(() => setUploadStatus(null), 5000);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -170,6 +200,33 @@ function App() {
         </div>
 
         <aside className="chat-sidebar">
+          <div className="card">
+            <h2>Upload Document</h2>
+            <p className="upload-hint">Upload PDF, DOCX, TXT, or MD files for RAG-enabled chat.</p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.docx,.txt,.md"
+              onChange={handleFileUpload}
+              disabled={isUploading || status !== 'ready'}
+              style={{ display: 'none' }}
+            />
+            <button
+              type="button"
+              className="upload-button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading || status !== 'ready'}
+            >
+              {isUploading ? 'Uploading...' : 'Choose File'}
+            </button>
+            {uploadStatus && <p className="upload-status">{uploadStatus}</p>}
+            {notebookId && (
+              <p className="notebook-id">
+                <strong>Notebook ID:</strong> <code>{notebookId.slice(0, 8)}...</code>
+              </p>
+            )}
+          </div>
+
           <div className="card">
             <h2>Configuration</h2>
             {config ? (

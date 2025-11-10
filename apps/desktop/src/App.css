@@ -343,6 +343,55 @@
   margin-top: 0.5rem;
 }
 
+.upload-hint {
+  font-size: 0.875rem;
+  color: rgba(220, 225, 255, 0.6);
+  margin: 0 0 0.75rem 0;
+}
+
+.upload-button {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(99, 102, 241, 0.5);
+  border-radius: 8px;
+  background: rgba(99, 102, 241, 0.2);
+  color: rgba(220, 225, 255, 0.9);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.upload-button:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.3);
+  border-color: rgba(99, 102, 241, 0.7);
+}
+
+.upload-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.upload-status {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  color: rgba(220, 225, 255, 0.8);
+  line-height: 1.5;
+}
+
+.notebook-id {
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: rgba(220, 225, 255, 0.7);
+}
+
+.notebook-id code {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.75rem;
+}
+
 .app-footer {
   padding: 1rem 2rem;
   text-align: center;

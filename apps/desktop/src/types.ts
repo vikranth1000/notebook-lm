@@ -6,6 +6,7 @@ export interface ChatMessage {
 export interface ChatRequest {
   prompt: string;
   history?: ChatMessage[];
+  notebook_id?: string | null;
 }
 
 export interface ChatResponse {
@@ -17,4 +18,10 @@ export interface BackendConfig {
   llm_provider: string;
   ollama_model: string;
   ollama_base_url: string;
+}
+
+export interface IngestionResponse {
+  notebook_id: string;
+  documents_processed: number;
+  chunks_indexed: number;
 }

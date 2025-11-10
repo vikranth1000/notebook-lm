@@ -13,6 +13,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     prompt: str
     history: List[ChatMessage] | None = None
+    notebook_id: str | None = Field(None, description="Optional notebook ID for RAG-enabled chat")
 
 
 class ChatResponse(BaseModel):
