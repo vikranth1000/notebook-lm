@@ -34,6 +34,7 @@ def create_app() -> FastAPI:
     app.state.chat_service = ChatService(create_llm_backend(settings), settings, rag_service=rag_service)
     app.state.ingestion_service = IngestionService(settings, vector_store)
     app.state.rag_service = rag_service
+    app.state.vector_store = vector_store
 
     # Allow renderer (http://localhost:5173) to call the API in dev; loosened in v1 for simplicity.
     app.add_middleware(

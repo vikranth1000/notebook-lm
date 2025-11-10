@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List
 
 from ..config import AppConfig
@@ -33,16 +34,12 @@ class RAGService:
         return self._llm
 
     async def query(self, notebook_id: str, question: str, top_k: int = 5) -> RAGResponse:
-        # Expand query for study/help requests to get more relevant chunks
-        expanded_query = question
-        study_keywords = ["study", "help", "understand", "explain", "learn", "review", "analyze"]
-        if any(keyword in question.lower() for keyword in study_keywords):
-            # For study requests, retrieve more chunks and use a broader query
-            top_k = max(top_k, 10)
-            # Add context words to help find relevant content
-            expanded_query = f"{question} research paper document content summary key points"
+        # Unified RAG query - works for all document types and question types
+        # Retrieve significantly more chunks to ensure we get content from all documents
+        # This helps when multiple documents are in the same notebook
+        top_k = max(top_k, 20)
         
-        query_results = self.vector_store.query(notebook_id=notebook_id, query=expanded_query, top_k=top_k)
+        query_results = self.vector_store.query(notebook_id=notebook_id, query=question, top_k=top_k)
 
         documents = query_results.get("documents", [[]])[0]
         metadatas = query_results.get("metadatas", [[]])[0]
@@ -54,29 +51,44 @@ class RAGService:
                 sources=[],
             )
 
-        prompt_context = "\n\n".join(f"Source {idx+1}: {doc}" for idx, doc in enumerate(documents))
+        # Group chunks by source file to understand document diversity
+        source_groups: dict[str, list[tuple[int, str]]] = {}
+        for idx, (doc, metadata) in enumerate(zip(documents, metadatas)):
+            source_path = metadata.get("source_path", "unknown") if isinstance(metadata, dict) else "unknown"
+            if source_path not in source_groups:
+                source_groups[source_path] = []
+            source_groups[source_path].append((idx, doc))
         
-        # Better prompt for study/help requests
-        if any(keyword in question.lower() for keyword in study_keywords):
-            prompt = (
-                "You are a helpful study assistant. The user wants help studying their uploaded research paper/document. "
-                "Provide a comprehensive summary and analysis of the document content. Include:\n"
-                "- Main topic and research question\n"
-                "- Key findings and conclusions\n"
-                "- Important methodologies or approaches\n"
-                "- Notable insights or contributions\n\n"
-                "Use the provided document chunks to give a thorough overview. Cite sources as [Source #].\n\n"
-                f"Document content:\n{prompt_context}\n\n"
-                f"User's request: {question}\n\n"
-                "Provide a helpful study guide:"
-            )
-        else:
-            prompt = (
-                "You are an offline notebook assistant. Answer the user question using the provided sources from their uploaded documents. "
-                "Cite sources as [Source #]. Be helpful and summarize the key information from the documents when answering general questions. "
-                "If the question is about what the document contains, provide a summary of the document's main content.\n\n"
-                f"Context from uploaded documents:\n{prompt_context}\n\nQuestion: {question}\nAnswer:"
-            )
+        # Build context with source information
+        prompt_parts = []
+        for source_path, chunks in source_groups.items():
+            source_name = Path(source_path).name if source_path != "unknown" else "Document"
+            prompt_parts.append(f"From {source_name}:")
+            for idx, doc in chunks:
+                prompt_parts.append(f"  [Source {idx+1}]: {doc}")
+            prompt_parts.append("")
+        
+        prompt_context = "\n".join(prompt_parts)
+        
+        # Unified prompt that works for all document types and question types
+        # The LLM will naturally understand the user's intent from their question
+        prompt = (
+            "You are a helpful assistant. The user has uploaded one or more documents and is asking questions about them. "
+            "Answer their question using ONLY the information provided in the document excerpts below.\n\n"
+            "Important: The user may have multiple documents uploaded. Pay attention to which document(s) are most relevant to their question. "
+            "If they mention a specific document type (e.g., 'research paper', 'resume'), focus on content from that type of document.\n\n"
+            "Guidelines:\n"
+            "- Base your answer strictly on the provided document content\n"
+            "- If the question asks for analysis, feedback, or improvement, provide thoughtful insights based on the content\n"
+            "- If the question asks for a summary, provide a comprehensive overview\n"
+            "- If the question asks for specific information, extract and present it clearly\n"
+            "- Cite sources as [Source #] when referencing specific excerpts\n"
+            "- If the answer cannot be found in the provided content, say so clearly\n"
+            "- Be helpful, accurate, and specific\n\n"
+            f"Document excerpts:\n{prompt_context}\n\n"
+            f"User's question: {question}\n\n"
+            "Answer:"
+        )
 
         if self.settings.llm_provider == "none":
             summary_lines = [

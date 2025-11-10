@@ -25,3 +25,14 @@ export interface IngestionResponse {
   documents_processed: number;
   chunks_indexed: number;
 }
+
+export interface DocumentInfo {
+  filename: string;
+  source_path: string;
+  chunk_count: number;
+  preview: string;
+}
+
+export interface DocumentsListResponse {
+  documents: DocumentInfo[];
+}

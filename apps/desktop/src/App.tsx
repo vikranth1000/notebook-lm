@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import './App.css';
 
-import { fetchConfig, sendChatMessage, uploadDocument } from './api';
-import type { BackendConfig, ChatMessage } from './types';
+import { fetchConfig, sendChatMessage, uploadDocument, listDocuments, getDocumentPreviewUrl } from './api';
+import type { BackendConfig, ChatMessage, DocumentInfo } from './types';
 import ReactMarkdown from 'react-markdown';
+import DocumentPreview from './DocumentPreview';
 
 type StatusState = 'starting' | 'ready' | 'error';
 
@@ -17,9 +18,13 @@ function App() {
   const [notebookId, setNotebookId] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<DocumentInfo[]>([]);
+  const [previewDocument, setPreviewDocument] = useState<DocumentInfo | null>(null);
+  const [selectedDocumentIndex, setSelectedDocumentIndex] = useState<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const documentItemsRef = useRef<(HTMLDivElement | null)[]>([]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -101,6 +106,23 @@ function App() {
     }
   };
 
+  const loadDocuments = async (id: string) => {
+    try {
+      const result = await listDocuments(id);
+      setDocuments(result.documents);
+    } catch (error) {
+      console.error('Failed to load documents:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (notebookId) {
+      loadDocuments(notebookId);
+    } else {
+      setDocuments([]);
+    }
+  }, [notebookId]);
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -114,6 +136,8 @@ function App() {
       setUploadStatus(
         `✅ Document processed! ${result.documents_processed} document(s), ${result.chunks_indexed} chunk(s) indexed.`,
       );
+      // Reload documents list
+      await loadDocuments(result.notebook_id);
       setTimeout(() => setUploadStatus(null), 5000);
     } catch (error) {
       setUploadStatus(`❌ Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -132,6 +156,47 @@ function App() {
       handleSend();
     }
   };
+
+  const handleDocumentClick = (doc: DocumentInfo) => {
+    setPreviewDocument(doc);
+  };
+
+  const handleDocumentKeyDown = (e: React.KeyboardEvent, doc: DocumentInfo, index: number) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      setPreviewDocument(doc);
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const nextIndex = index < documents.length - 1 ? index + 1 : 0;
+      setSelectedDocumentIndex(nextIndex);
+      documentItemsRef.current[nextIndex]?.focus();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const prevIndex = index > 0 ? index - 1 : documents.length - 1;
+      setSelectedDocumentIndex(prevIndex);
+      documentItemsRef.current[prevIndex]?.focus();
+    }
+  };
+
+  // Global keyboard handler for spacebar when a document is focused
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Only handle spacebar if we're not typing in an input
+      if (e.key === ' ' && selectedDocumentIndex !== null && !previewDocument) {
+        const target = e.target as HTMLElement;
+        if (target.tagName !== 'INPUT' && target.tagName !== 'TEXTAREA') {
+          e.preventDefault();
+          const doc = documents[selectedDocumentIndex];
+          if (doc) {
+            setPreviewDocument(doc);
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [selectedDocumentIndex, documents, previewDocument]);
 
   const statusLabel = status === 'ready' ? 'Ready' : status === 'error' ? 'Error' : 'Starting';
 
@@ -227,6 +292,45 @@ function App() {
             )}
           </div>
 
+          {documents.length > 0 && (
+            <div className="card">
+              <h2>Uploaded Documents ({documents.length})</h2>
+              <div className="documents-list">
+                {documents.map((doc, idx) => (
+                  <div
+                    key={idx}
+                    ref={(el) => {
+                      documentItemsRef.current[idx] = el;
+                    }}
+                    className={`document-item ${selectedDocumentIndex === idx ? 'document-item-selected' : ''}`}
+                    onClick={() => handleDocumentClick(doc)}
+                    onKeyDown={(e) => handleDocumentKeyDown(e, doc, idx)}
+                    onFocus={() => setSelectedDocumentIndex(idx)}
+                    onBlur={() => {
+                      // Only clear selection if focus is moving to another document
+                      setTimeout(() => {
+                        if (!documentItemsRef.current.some((ref) => ref === document.activeElement)) {
+                          setSelectedDocumentIndex(null);
+                        }
+                      }, 0);
+                    }}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`Preview ${doc.filename}. Press space or enter to open.`}
+                  >
+                    <div className="document-header">
+                      <span className="document-name" title={doc.filename}>
+                        {doc.filename}
+                      </span>
+                      <span className="document-chunks">{doc.chunk_count} chunks</span>
+                    </div>
+                    <div className="document-hint">Click or press Space to preview</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="card">
             <h2>Configuration</h2>
             {config ? (
@@ -262,6 +366,15 @@ function App() {
       <footer className="app-footer">
         <p>All inference stays on-device. No cloud calls.</p>
       </footer>
+
+      {previewDocument && notebookId && (
+        <DocumentPreview
+          isOpen={!!previewDocument}
+          onClose={() => setPreviewDocument(null)}
+          documentUrl={getDocumentPreviewUrl(notebookId, previewDocument.source_path)}
+          filename={previewDocument.filename}
+        />
+      )}
     </div>
   );
 }

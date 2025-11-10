@@ -18,12 +18,12 @@ class AppConfig(BaseSettings):
     embedding_backend: Literal["sentence-transformers", "hash"] = "sentence-transformers"
     embedding_model: str = "all-MiniLM-L6-v2"
 
-    llm_provider: Literal["none", "ollama", "llama-cpp"] = "none"
+    llm_provider: Literal["none", "ollama", "llama-cpp"] = "ollama"  # Default to ollama
     ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "mistral"
+    ollama_model: str = "qwen2.5:3b"  # Match the model you're using
     llm_model_path: Path | None = None
     llm_context_window: int = 2048
-    llm_max_tokens: int = 512
+    llm_max_tokens: int = 2048
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="NOTEBOOKLM_", extra="ignore")
 
