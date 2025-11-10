@@ -24,9 +24,11 @@ jobs:
         run: uv pip install -e ".[dev]"
       - name: Lint and Tests
         working-directory: backend
+        env:
+          PYTHONPATH: .
         run: |
           uv run ruff check .
-          uv run pytest
+          uv run pytest -q
 
   desktop:
     runs-on: ubuntu-latest
