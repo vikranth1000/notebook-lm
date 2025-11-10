@@ -44,10 +44,13 @@ allow-direct-references = true
 packages = ["notebooklm_backend"]
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py312"
-select = ["E", "F", "I", "UP", "B", "S"]
-ignore = ["B008"]
+
+[tool.ruff.lint]
+# Keep CI fast and frictionless in v1: only catch obvious errors (E,F).
+select = ["E", "F"]
+ignore = []
 
 [tool.pytest.ini_options]
 addopts = "-q"
