@@ -1,72 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import './App.css';
 
-import {
-  fetchConfig,
-  fetchJobs,
-  fetchNotebooks,
-  ingestNotebook,
-  ragQuery,
-} from './api';
-import type {
-  BackendConfig,
-  IngestionJobStatus,
-  NotebookMetadata,
-  RAGQueryResponse,
-  RAGSource,
-} from './types';
+import { fetchConfig, sendChatMessage } from './api';
+import type { BackendConfig, ChatMessage } from './types';
 
 type StatusState = 'starting' | 'ready' | 'error';
-
-interface Banner {
-  type: 'success' | 'error';
-  message: string;
-}
-
-interface ChatTurn {
-  id: string;
-  question: string;
-  answer: string | null;
-  sources: RAGSource[];
-  status: 'pending' | 'complete' | 'error';
-  createdAt: string;
-  error?: string;
-}
-
-const POLL_INTERVAL = 4000;
-
-function formatDate(iso: string | null | undefined): string {
-  if (!iso) return '–';
-  return new Date(iso).toLocaleString();
-}
-
-function formatSourcePath(path: string): string {
-  if (!path) return 'Unknown source';
-  const segments = path.split(/[\\/]/);
-  return segments.slice(-2).join('/');
-}
-
-const createTurnId = () =>
-  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 function App() {
   const [status, setStatus] = useState<StatusState>('starting');
   const [config, setConfig] = useState<BackendConfig | null>(null);
   const [bridgeMessage, setBridgeMessage] = useState<string | null>(null);
-  const [notebooks, setNotebooks] = useState<NotebookMetadata[]>([]);
-  const [jobs, setJobs] = useState<IngestionJobStatus[]>([]);
-  const [selectedNotebookId, setSelectedNotebookId] = useState<string | null>(null);
-  const [ingestPath, setIngestPath] = useState('');
-  const [ingestNotebookId, setIngestNotebookId] = useState('');
-  const [recursive, setRecursive] = useState(true);
-  const [isIngesting, setIsIngesting] = useState(false);
-  const [banner, setBanner] = useState<Banner | null>(null);
-
-  const [question, setQuestion] = useState('');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [chatTurns, setChatTurns] = useState<ChatTurn[]>([]);
 
   useEffect(() => {
     async function bootstrap() {
@@ -85,422 +31,147 @@ function App() {
       } catch (error) {
         console.error(error);
         setStatus('error');
-        setBridgeMessage('Failed to talk to backend bridge');
+        setBridgeMessage('Failed to connect to backend');
       }
     }
 
     bootstrap();
   }, []);
 
-  useEffect(() => {
-    if (status !== 'ready') return;
+  const handleSend = async () => {
+    if (!input.trim() || isSubmitting) return;
 
-    let cancelled = false;
-
-    const poll = async () => {
-      try {
-        const [nb, jb] = await Promise.all([fetchNotebooks(), fetchJobs()]);
-        if (!cancelled) {
-          setNotebooks(nb);
-          setJobs(jb);
-          if (!selectedNotebookId && nb.length > 0) {
-            setSelectedNotebookId(nb[0].notebook_id);
-          }
-        }
-      } catch (error) {
-        if (!cancelled) {
-          console.error(error);
-          setStatus('error');
-          setBanner({ type: 'error', message: 'Lost connection to backend. Check that it is running.' });
-        }
-      }
-    };
-
-    poll();
-    const interval = window.setInterval(poll, POLL_INTERVAL);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [status, selectedNotebookId]);
-
-  const selectedNotebook = useMemo(
-    () => notebooks.find((nb) => nb.notebook_id === selectedNotebookId) ?? null,
-    [notebooks, selectedNotebookId],
-  );
-
-  const statusLabel = useMemo(() => {
-    switch (status) {
-      case 'ready':
-        return 'Ready';
-      case 'error':
-        return 'Bridge error';
-      default:
-        return 'Starting';
-    }
-  }, [status]);
-
-  const handleChoosePath = async () => {
-    try {
-      const path = await window.notebookBridge?.choosePath({
-        title: 'Select file or folder to ingest',
-        properties: ['openDirectory', 'openFile'],
-      });
-      if (path) {
-        setIngestPath(path);
-      }
-    } catch (error) {
-      console.error(error);
-      setBanner({ type: 'error', message: 'Unable to open file picker.' });
-    }
-  };
-
-  const handleIngest = async () => {
-    if (!ingestPath) {
-      setBanner({ type: 'error', message: 'Please select a file or folder to ingest.' });
-      return;
-    }
-    setIsIngesting(true);
-    try {
-      const result = await ingestNotebook({
-        path: ingestPath,
-        notebook_id: ingestNotebookId || undefined,
-        recursive,
-      });
-      setBanner({
-        type: 'success',
-        message: result.status === 'failed' ? result.message ?? 'Ingestion failed.' : result.message ?? 'Ingestion started.',
-      });
-      setIngestNotebookId('');
-    } catch (error) {
-      console.error(error);
-      setBanner({ type: 'error', message: error instanceof Error ? error.message : 'Failed to ingest notebook.' });
-    } finally {
-      setIsIngesting(false);
-    }
-  };
-
-  const handleAsk = async () => {
-    if (!selectedNotebook) {
-      setBanner({ type: 'error', message: 'Please select a notebook first.' });
-      return;
-    }
-    if (!question.trim()) {
-      return;
-    }
-
-    const turnId = createTurnId();
-    const createdAt = new Date().toISOString();
-
-    setChatTurns((prev) => [
-      {
-        id: turnId,
-        question,
-        answer: null,
-        sources: [],
-        status: 'pending',
-        createdAt,
-      },
-      ...prev,
-    ]);
-
-    setQuestion('');
+    const userMessage: ChatMessage = { role: 'user', content: input.trim() };
+    setMessages((prev) => [...prev, userMessage]);
+    setInput('');
     setIsSubmitting(true);
 
     try {
-      const response: RAGQueryResponse = await ragQuery({
-        notebook_id: selectedNotebook.notebook_id,
-        question,
-        top_k: 5,
+      const response = await sendChatMessage({
+        prompt: userMessage.content,
+        history: messages.map((m) => ({ role: m.role, content: m.content })),
       });
 
-      setChatTurns((prev) =>
-        prev.map((turn) =>
-          turn.id === turnId
-            ? {
-                ...turn,
-                answer: response.answer,
-                sources: response.sources,
-                status: 'complete',
-              }
-            : turn,
-        ),
-      );
+      const assistantMessage: ChatMessage = { role: 'assistant', content: response.reply };
+      setMessages((prev) => [...prev, assistantMessage]);
     } catch (error) {
       console.error(error);
-      const message = error instanceof Error ? error.message : 'Failed to get response from backend.';
-      setChatTurns((prev) =>
-        prev.map((turn) =>
-          turn.id === turnId
-            ? {
-                ...turn,
-                answer: null,
-                status: 'error',
-                error: message,
-              }
-            : turn,
-        ),
-      );
-      setBanner({ type: 'error', message });
+      const errorMessage: ChatMessage = {
+        role: 'assistant',
+        content: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleResetChat = () => {
-    setChatTurns([]);
-  };
-
-  const handleOpenDocs = async () => {
-    const url = 'https://github.com';
-    try {
-      await window.notebookBridge?.openExternal?.(url);
-    } catch (error) {
-      console.error(error);
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
     }
   };
+
+  const statusLabel = status === 'ready' ? 'Ready' : status === 'error' ? 'Error' : 'Starting';
 
   return (
     <div className="app-shell">
       <header className="app-header">
         <div className="branding">
           <h1>Offline Notebook LM</h1>
-          <p>Private research notebooks with fully local ingestion, embeddings, and chat.</p>
+          <p>Chat with local models via Ollama</p>
         </div>
         <div className="header-meta">
           <div className={`status-indicator status-${status}`}>
             <span className="dot" />
             <span>{statusLabel}</span>
           </div>
-          <button className="ghost-button" onClick={handleOpenDocs}>
-            View Docs
-          </button>
         </div>
       </header>
 
-      {banner && (
-        <div className={`banner banner-${banner.type}`} onClick={() => setBanner(null)}>
-          {banner.message}
-        </div>
-      )}
-
-      <div className="content">
-        <aside className="sidebar">
-          <section className="card">
-            <h2>Ingest documents</h2>
-            <p className="subtitle">
-              Drop folders or files to build a notebook. Supported formats: PDF, DOCX, Markdown, TXT.
-            </p>
-
-            <label className="field">
-              <span>File or folder path</span>
-              <div className="field-row">
-                <input
-                  type="text"
-                  value={ingestPath}
-                  onChange={(event) => setIngestPath(event.target.value)}
-                  placeholder="/Users/you/Documents/research"
-                />
-                <button type="button" className="secondary" onClick={handleChoosePath}>
-                  Browse…
-                </button>
-              </div>
-            </label>
-
-            <label className="field">
-              <span>Notebook ID (optional)</span>
-              <input
-                type="text"
-                value={ingestNotebookId}
-                onChange={(event) => setIngestNotebookId(event.target.value)}
-                placeholder="auto-generated if left blank"
-              />
-            </label>
-
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={recursive}
-                onChange={(event) => setRecursive(event.target.checked)}
-              />
-              <span>Include sub-folders</span>
-            </label>
-
-            <button
-              type="button"
-              className="primary-button"
-              onClick={handleIngest}
-              disabled={isIngesting}
-            >
-              {isIngesting ? 'Ingesting…' : 'Ingest notebook'}
-            </button>
-            <p className="status-hint">Bridge: {bridgeMessage ?? 'Waiting…'}</p>
-          </section>
-
-          <section className="card">
-            <div className="section-header">
-              <h2>Notebooks</h2>
-              <span className="count">{notebooks.length}</span>
-            </div>
-            <ul className="notebook-list">
-              {notebooks.map((notebook) => (
-                <li
-                  key={notebook.notebook_id}
-                  className={notebook.notebook_id === selectedNotebookId ? 'active' : ''}
-                  onClick={() => {
-                    setSelectedNotebookId(notebook.notebook_id);
-                    setChatTurns([]);
-                  }}
-                >
-                  <div className="notebook-title">{notebook.title || notebook.notebook_id}</div>
-                  <div className="notebook-meta">
-                    {notebook.source_count} sources · {notebook.chunk_count} chunks
-                  </div>
-                  <div className="notebook-updated">Updated {formatDate(notebook.updated_at)}</div>
-                </li>
-              ))}
-              {notebooks.length === 0 && (
-                <li className="empty-state">No notebooks yet. Ingest a folder to get started.</li>
-              )}
-            </ul>
-          </section>
-
-          <section className="card">
-            <div className="section-header">
-              <h2>Ingestion jobs</h2>
-              <span className="count">{jobs.length}</span>
-            </div>
-            <ul className="job-list">
-              {jobs.map((job) => (
-                <li key={job.job_id}>
-                  <div className="job-header">
-                    <span className={`job-status job-${job.status}`}>{job.status}</span>
-                    <span className="job-id">{job.job_id.slice(0, 8)}</span>
-                  </div>
-                  <div className="job-meta">
-                    {job.documents_processed} docs · {job.chunks_indexed} chunks
-                  </div>
-                  <div className="job-message">{job.message ?? 'Working…'}</div>
-                  <div className="job-timestamp">
-                    {job.started_at ? `Started ${formatDate(job.started_at)}` : ''}
-                    {job.completed_at ? ` • Finished ${formatDate(job.completed_at)}` : ''}
-                  </div>
-                </li>
-              ))}
-              {jobs.length === 0 && <li className="empty-state">No jobs yet.</li>}
-            </ul>
-          </section>
-        </aside>
-
-        <main className="workspace">
-          <section className="card">
-            <div className="section-header">
-      <div>
-                <h2>Chat with your notebooks</h2>
-                {selectedNotebook ? (
-                  <p className="subtitle">
-                    Currently chatting with <strong>{selectedNotebook.title || selectedNotebook.notebook_id}</strong>
+      <main className="chat-main">
+        <div className="chat-container">
+          <div className="chat-messages">
+            {messages.length === 0 && (
+              <div className="empty-chat">
+                <p>Start a conversation with your local model.</p>
+                {config && (
+                  <p className="config-hint">
+                    Using {config.ollama_model} via {config.ollama_base_url}
                   </p>
-                ) : (
-                  <p className="subtitle">Select a notebook to start asking questions.</p>
                 )}
               </div>
-              <button className="ghost-button" onClick={handleResetChat} disabled={chatTurns.length === 0}>
-                Clear chat
-              </button>
-      </div>
-
-            <div className="question-box">
-              <textarea
-                placeholder={
-                  selectedNotebook
-                    ? 'Ask about the contents of this notebook…'
-                    : 'Load a notebook before asking a question.'
-                }
-                value={question}
-                onChange={(event) => setQuestion(event.target.value)}
-                rows={3}
-                disabled={!selectedNotebook || isSubmitting}
-              />
-              <div className="question-actions">
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={handleAsk}
-                  disabled={!selectedNotebook || isSubmitting || !question.trim()}
-                >
-                  {isSubmitting ? 'Thinking…' : 'Ask question'}
-        </button>
+            )}
+            {messages.map((msg, idx) => (
+              <div key={idx} className={`message message-${msg.role}`}>
+                <div className="message-role">{msg.role === 'user' ? 'You' : 'Assistant'}</div>
+                <div className="message-content">{msg.content}</div>
               </div>
-            </div>
+            ))}
+            {isSubmitting && (
+              <div className="message message-assistant">
+                <div className="message-role">Assistant</div>
+                <div className="message-content">Thinking...</div>
+              </div>
+            )}
+          </div>
 
-            <div className="chat-log">
-              {chatTurns.length === 0 && (
-                <div className="empty-chat">
-                  Ready when you are. Ask about summaries, cross-reference notes, or request study guides.
-                </div>
-              )}
-              {chatTurns.map((turn) => (
-                <article key={turn.id} className="chat-turn">
-                  <header>
-                    <span className="chat-question">{turn.question}</span>
-                    <time>{formatDate(turn.createdAt)}</time>
-                  </header>
+          <div className="chat-input-area">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Type your message... (Press Enter to send, Shift+Enter for new line)"
+              rows={3}
+              disabled={isSubmitting || status !== 'ready'}
+            />
+            <button
+              type="button"
+              className="send-button"
+              onClick={handleSend}
+              disabled={!input.trim() || isSubmitting || status !== 'ready'}
+            >
+              {isSubmitting ? 'Sending...' : 'Send'}
+            </button>
+          </div>
+        </div>
 
-                  {turn.status === 'pending' && <p className="pending">Generating answer…</p>}
-                  {turn.status === 'error' && <p className="error">Failed: {turn.error}</p>}
-                  {turn.status === 'complete' && turn.answer && (
-                    <p className="answer">{turn.answer}</p>
-                  )}
-
-                  {turn.sources.length > 0 && (
-                    <ul className="source-list">
-                      {turn.sources.map((source, index) => (
-                        <li key={`${turn.id}-source-${index}`}>
-                          <span className="source-label">Source {index + 1}</span>
-                          <span className="source-path">{formatSourcePath(source.source_path)}</span>
-                          <p className="source-snippet">
-                            {source.content.length > 320 ? `${source.content.slice(0, 320)}…` : source.content}
-                          </p>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section className="card">
+        <aside className="chat-sidebar">
+          <div className="card">
             <h2>Configuration</h2>
             {config ? (
-              <dl className="config-grid">
+              <dl className="config-list">
                 <div>
-                  <dt>Models directory</dt>
-                  <dd>{config.models_dir}</dd>
+                  <dt>Provider</dt>
+                  <dd>{config.llm_provider || 'none'}</dd>
                 </div>
                 <div>
-                  <dt>Indexes directory</dt>
-                  <dd>{config.indexes_dir}</dd>
+                  <dt>Model</dt>
+                  <dd>{config.ollama_model}</dd>
                 </div>
                 <div>
-                  <dt>Workspace root</dt>
-                  <dd>{config.workspace_root}</dd>
-                </div>
-                <div>
-                  <dt>Audio features</dt>
-                  <dd>{config.enable_audio ? 'Enabled' : 'Disabled'}</dd>
+                  <dt>Base URL</dt>
+                  <dd>{config.ollama_base_url}</dd>
                 </div>
               </dl>
             ) : (
-              <p>Loading configuration…</p>
+              <p>Loading...</p>
             )}
-          </section>
-        </main>
-      </div>
+          </div>
+
+          <div className="card">
+            <h2>Status</h2>
+            <p>Bridge: {bridgeMessage ?? 'Waiting...'}</p>
+            {status === 'error' && (
+              <p className="error-hint">Make sure the backend is running on http://127.0.0.1:8000</p>
+            )}
+          </div>
+        </aside>
+      </main>
 
       <footer className="app-footer">
-        <p>All inference, storage, and retrieval stay on-device. No cloud calls.</p>
+        <p>All inference stays on-device. No cloud calls.</p>
       </footer>
     </div>
   );
