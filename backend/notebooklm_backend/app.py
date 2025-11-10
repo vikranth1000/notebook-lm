@@ -27,7 +27,11 @@ def create_app() -> FastAPI:
     # Allow renderer (http://localhost:5173) to call the API in dev; loosened in v1 for simplicity.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "null",  # Electron file:// origin
+        ],
         allow_origin_regex=".*",
         allow_credentials=True,
         allow_methods=["*"],

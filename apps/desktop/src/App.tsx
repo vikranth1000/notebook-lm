@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './App.css';
 
 import { fetchConfig, sendChatMessage } from './api';
 import type { BackendConfig, ChatMessage } from './types';
+import ReactMarkdown from 'react-markdown';
 
 type StatusState = 'starting' | 'ready' | 'error';
 
@@ -13,6 +14,33 @@ function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isSubmitting]);
+
+  useEffect(() => {
+    if (status === 'ready') {
+      inputRef.current?.focus();
+    }
+  }, [status]);
+
+  // Auto-focus input when submission completes
+  useEffect(() => {
+    if (!isSubmitting && status === 'ready') {
+      // Small delay to ensure DOM has updated
+      const timer = setTimeout(() => {
+        inputRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isSubmitting, status]);
 
   useEffect(() => {
     async function bootstrap() {
@@ -28,6 +56,7 @@ function App() {
         const cfg = await fetchConfig();
         setConfig(cfg);
         setStatus('ready');
+        inputRef.current?.focus();
       } catch (error) {
         console.error(error);
         setStatus('error');
@@ -44,6 +73,7 @@ function App() {
     const userMessage: ChatMessage = { role: 'user', content: input.trim() };
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
+    inputRef.current?.focus();
     setIsSubmitting(true);
 
     try {
@@ -106,7 +136,7 @@ function App() {
             {messages.map((msg, idx) => (
               <div key={idx} className={`message message-${msg.role}`}>
                 <div className="message-role">{msg.role === 'user' ? 'You' : 'Assistant'}</div>
-                <div className="message-content">{msg.content}</div>
+                <ReactMarkdown className="message-content markdown">{msg.content}</ReactMarkdown>
               </div>
             ))}
             {isSubmitting && (
@@ -115,11 +145,13 @@ function App() {
                 <div className="message-content">Thinking...</div>
               </div>
             )}
+            <div ref={messagesEndRef} />
           </div>
 
           <div className="chat-input-area">
             <textarea
               value={input}
+              ref={inputRef}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Type your message... (Press Enter to send, Shift+Enter for new line)"

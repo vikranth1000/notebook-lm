@@ -22,13 +22,22 @@ class OllamaBackend:
         payload = {
             "model": self.model,
             "prompt": prompt,
+            "stream": False,
             "options": {"num_predict": max_tokens},
         }
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(f"{self.base_url}/api/generate", json=payload)
-            response.raise_for_status()
-            data = response.json()
-        return data.get("response", "").strip()
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(f"{self.base_url}/api/generate", json=payload)
+                response.raise_for_status()
+                data = response.json()
+                if "error" in data:
+                    raise ValueError(f"Ollama error: {data['error']}")
+                return data.get("response", "").strip()
+        except httpx.HTTPStatusError as e:
+            error_text = e.response.text if e.response else str(e)
+            raise ValueError(f"Ollama HTTP error: {e.response.status_code} - {error_text}")
+        except httpx.RequestError as e:
+            raise ValueError(f"Cannot connect to Ollama at {self.base_url}: {str(e)}")
 
 
 @dataclass
