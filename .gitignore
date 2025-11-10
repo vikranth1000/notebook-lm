@@ -1,0 +1,41 @@
+# Global artifacts
+.DS_Store
+.idea/
+.vscode/
+.cursor/
+*.log
+*.tmp
+*.pyc
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+*/.venv/
+env/
+
+# Node / frontend
+apps/desktop/node_modules/
+apps/desktop/dist/
+apps/desktop/.eslintcache
+
+# Backend caches
+backend/.benchmarks/
+backend/.coverage
+backend/.pytest_cache/
+backend/.mypy_cache/
+
+# Local runtime data
+models/
+indexes/
+data/
+.env
+.env.*
+
+# macOS trash
+.Trashes
+ehthumbs.db
+Thumbs.db
+
