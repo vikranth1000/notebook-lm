@@ -110,16 +110,57 @@ class LlamaIndexRAGService:
                 request_timeout=120.0,
             )
 
-            # Create query engine with better retrieval and response synthesis
+            # For multi-document scenarios, retrieve more chunks to ensure we get content from all documents
+            # This is especially important when one document has many more chunks than others
+            retrieval_top_k = max(top_k, 20)  # Retrieve at least 20 chunks for multi-doc scenarios
+            
+            # Create a custom retriever to get more context
+            retriever = index.as_retriever(
+                similarity_top_k=retrieval_top_k,
+            )
+            
+            # Retrieve nodes first to analyze source distribution
+            logger.info(f"Retrieving top {retrieval_top_k} chunks for query...")
+            retrieved_nodes = retriever.retrieve(question)
+            logger.info(f"Retrieved {len(retrieved_nodes)} nodes")
+            
+            # Group nodes by source to understand document diversity
+            from collections import defaultdict
+            from pathlib import Path
+            source_groups = defaultdict(list)
+            for node_with_score in retrieved_nodes:
+                node = node_with_score.node if hasattr(node_with_score, "node") else node_with_score
+                meta = getattr(node, "metadata", {}) or {}
+                source_path = str(meta.get("source_path", "unknown"))
+                source_name = Path(source_path).name if source_path != "unknown" else "Document"
+                source_groups[source_name].append(node_with_score)
+            
+            logger.info(f"Found content from {len(source_groups)} different documents: {list(source_groups.keys())}")
+            
+            # Enhance the question with multi-document awareness
+            # This helps the LLM understand which document to focus on
+            enhanced_question = question
+            if len(source_groups) > 1:
+                doc_names = list(source_groups.keys())
+                doc_list = ", ".join(doc_names[:3])  # List up to 3 documents
+                enhanced_question = (
+                    f"Context: The user has uploaded {len(source_groups)} documents: {doc_list}. "
+                    f"Pay close attention to which document is most relevant to their question. "
+                    f"If they mention a specific document type (e.g., 'resume', 'research paper', 'the other document'), "
+                    f"you must identify and focus on content from that specific document type.\n\n"
+                    f"User's question: {question}"
+                )
+                logger.info(f"Enhanced question for multi-document scenario with {len(source_groups)} documents")
+            
+            # Create query engine - it will use the retrieved nodes (already grouped by source)
             query_engine = index.as_query_engine(
-                similarity_top_k=max(top_k, 10),
+                similarity_top_k=retrieval_top_k,
                 llm=llm,
-                # Use response mode that includes source citations
-                response_mode="compact",  # "compact" gives concise answers with sources
+                response_mode="compact",
             )
             
             logger.info(f"Executing LlamaIndex query with {collection_count} documents in collection...")
-            result = query_engine.query(question)
+            result = query_engine.query(enhanced_question)
 
             # Extract answer
             answer = str(getattr(result, "response", result))
