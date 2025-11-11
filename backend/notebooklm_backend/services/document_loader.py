@@ -20,7 +20,7 @@ def iter_supported_files(path: Path, recursive: bool = True) -> Iterable[Path]:
     """
     Iterate over supported document files in the given path.
     
-    Supported formats: .txt, .md, .pdf, .docx
+    Supported formats: .txt, .md, .pdf, .docx, .pptx, .py
     """
     if path.is_file():
         if _is_supported(path):
@@ -39,7 +39,7 @@ def iter_supported_files(path: Path, recursive: bool = True) -> Iterable[Path]:
 
 def _is_supported(path: Path) -> bool:
     """Check if file extension is supported."""
-    supported = {".txt", ".md", ".pdf", ".docx"}
+    supported = {".txt", ".md", ".pdf", ".docx", ".pptx", ".py"}
     return path.suffix.lower() in supported
 
 
@@ -47,7 +47,7 @@ def load_document(file_path: Path) -> LoadedDocument:
     """
     Load a document from file path.
     
-    Supports: .txt, .md, .pdf, .docx
+    Supports: .txt, .md, .pdf, .docx, .pptx, .py
     """
     if not file_path.exists():
         raise DocumentLoaderError(f"File does not exist: {file_path}")
@@ -60,6 +60,10 @@ def load_document(file_path: Path) -> LoadedDocument:
         return _load_pdf(file_path)
     elif suffix == ".docx":
         return _load_docx(file_path)
+    elif suffix == ".pptx":
+        return _load_pptx(file_path)
+    elif suffix == ".py":
+        return _load_text_file(file_path)
     else:
         raise DocumentLoaderError(f"Unsupported file type: {suffix}")
 
@@ -110,4 +114,27 @@ def _load_docx(file_path: Path) -> LoadedDocument:
         raise DocumentLoaderError("python-docx is required for DOCX support")
     except Exception as e:
         raise DocumentLoaderError(f"Failed to read DOCX {file_path}: {e}")
+
+
+def _load_pptx(file_path: Path) -> LoadedDocument:
+    """Load PPTX file using python-pptx by concatenating text from slides."""
+    try:
+        from pptx import Presentation
+        prs = Presentation(str(file_path))
+        text_parts: list[str] = []
+        for slide in prs.slides:
+            # Extract text from all shapes that contain text frames
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text:
+                    text_parts.append(shape.text)
+                elif hasattr(shape, "text_frame") and shape.text_frame:
+                    for p in shape.text_frame.paragraphs:
+                        if p.text:
+                            text_parts.append(p.text)
+        text = "\n\n".join(part.strip() for part in text_parts if part and part.strip())
+        return LoadedDocument(path=file_path, text=text)
+    except ImportError:
+        raise DocumentLoaderError("python-pptx is required for PPTX support")
+    except Exception as e:
+        raise DocumentLoaderError(f"Failed to read PPTX {file_path}: {e}")
 
