@@ -110,9 +110,26 @@ class LlamaIndexRAGService:
                 request_timeout=120.0,
             )
 
-            # For multi-document scenarios, retrieve more chunks to ensure we get content from all documents
-            # This is especially important when one document has many more chunks than others
-            retrieval_top_k = max(top_k, 20)  # Retrieve at least 20 chunks for multi-doc scenarios
+            # For multi-document scenarios, we need to ensure we retrieve chunks from ALL documents
+            # First, get all unique documents in the collection
+            all_docs = collection.get(include=["metadatas"])
+            all_metadatas = all_docs.get("metadatas", [])
+            
+            # Count documents by source
+            from collections import defaultdict
+            from pathlib import Path
+            doc_sources = defaultdict(int)
+            for meta in all_metadatas:
+                if isinstance(meta, dict):
+                    source_path = meta.get("source_path", "unknown")
+                    source_name = Path(source_path).name if source_path != "unknown" else "Document"
+                    doc_sources[source_name] += 1
+            
+            logger.info(f"Collection contains {len(doc_sources)} documents: {dict(doc_sources)}")
+            
+            # Retrieve significantly more chunks to ensure we get content from all documents
+            # Use a multiplier based on number of documents
+            retrieval_top_k = max(top_k, 20, len(doc_sources) * 10)  # At least 10 chunks per document
             
             # Create a custom retriever to get more context
             retriever = index.as_retriever(
@@ -125,8 +142,6 @@ class LlamaIndexRAGService:
             logger.info(f"Retrieved {len(retrieved_nodes)} nodes")
             
             # Group nodes by source to understand document diversity
-            from collections import defaultdict
-            from pathlib import Path
             source_groups = defaultdict(list)
             for node_with_score in retrieved_nodes:
                 node = node_with_score.node if hasattr(node_with_score, "node") else node_with_score
@@ -136,6 +151,12 @@ class LlamaIndexRAGService:
                 source_groups[source_name].append(node_with_score)
             
             logger.info(f"Found content from {len(source_groups)} different documents: {list(source_groups.keys())}")
+            
+            # If we're missing documents in retrieval, log a warning
+            missing_docs = set(doc_sources.keys()) - set(source_groups.keys())
+            if missing_docs:
+                logger.warning(f"Warning: No chunks retrieved from these documents: {missing_docs}")
+                logger.warning(f"This might cause the LLM to miss relevant information. Consider increasing retrieval_top_k.")
             
             # Enhance the question with multi-document awareness
             # This helps the LLM understand which document to focus on
