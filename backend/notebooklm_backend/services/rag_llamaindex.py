@@ -152,26 +152,38 @@ class LlamaIndexRAGService:
             
             logger.info(f"Found content from {len(source_groups)} different documents: {list(source_groups.keys())}")
             
-            # If we're missing documents in retrieval, log a warning
+            # If we're missing documents in retrieval, this is a problem
+            # The query might not find relevant content from all documents
             missing_docs = set(doc_sources.keys()) - set(source_groups.keys())
             if missing_docs:
                 logger.warning(f"Warning: No chunks retrieved from these documents: {missing_docs}")
-                logger.warning(f"This might cause the LLM to miss relevant information. Consider increasing retrieval_top_k.")
+                logger.warning(f"Available documents: {list(doc_sources.keys())}")
+                logger.warning(f"Retrieved from: {list(source_groups.keys())}")
+                # If user is asking about a missing document, fall back to custom RAG
+                question_lower = question.lower()
+                for missing_doc in missing_docs:
+                    missing_lower = missing_doc.lower()
+                    # Check if question mentions the missing document
+                    if any(keyword in question_lower for keyword in ["resume", "cv", "other document", "second document", "other file"]):
+                        if "resume" in missing_lower or "cv" in missing_lower or "vikranth" in missing_lower:
+                            logger.warning(f"User is asking about '{missing_doc}' but no chunks were retrieved. Falling back to custom RAG.")
+                            if hasattr(self, "_fallback_rag"):
+                                return await self._fallback_rag.query(notebook_id, question, top_k)
             
             # Enhance the question with multi-document awareness
-            # This helps the LLM understand which document to focus on
+            # Include ALL documents (not just retrieved ones) so LLM knows what's available
+            all_doc_names = list(doc_sources.keys())
             enhanced_question = question
-            if len(source_groups) > 1:
-                doc_names = list(source_groups.keys())
-                doc_list = ", ".join(doc_names[:3])  # List up to 3 documents
+            if len(all_doc_names) > 1:
+                doc_list = ", ".join(all_doc_names)
                 enhanced_question = (
-                    f"Context: The user has uploaded {len(source_groups)} documents: {doc_list}. "
+                    f"Context: The user has uploaded {len(all_doc_names)} documents: {doc_list}. "
                     f"Pay close attention to which document is most relevant to their question. "
-                    f"If they mention a specific document type (e.g., 'resume', 'research paper', 'the other document'), "
+                    f"If they mention a specific document type (e.g., 'resume', 'research paper', 'the other document', 'the resume'), "
                     f"you must identify and focus on content from that specific document type.\n\n"
                     f"User's question: {question}"
                 )
-                logger.info(f"Enhanced question for multi-document scenario with {len(source_groups)} documents")
+                logger.info(f"Enhanced question for multi-document scenario with {len(all_doc_names)} documents: {all_doc_names}")
             
             # Create query engine - it will use the retrieved nodes (already grouped by source)
             query_engine = index.as_query_engine(
