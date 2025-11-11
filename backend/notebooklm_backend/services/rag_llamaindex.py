@@ -155,20 +155,47 @@ class LlamaIndexRAGService:
             # If we're missing documents in retrieval, this is a problem
             # The query might not find relevant content from all documents
             missing_docs = set(doc_sources.keys()) - set(source_groups.keys())
+            question_lower = question.lower()
+            
+            # More aggressive fallback: if user asks about resume/CV and we have multiple documents,
+            # check if any document looks like a resume (by filename) and ensure we retrieved from it
+            resume_keywords = ["resume", "cv", "curriculum vitae", "my resume", "the resume"]
+            if any(keyword in question_lower for keyword in resume_keywords):
+                # Find documents that might be resumes (by filename)
+                potential_resumes = [doc for doc in doc_sources.keys() 
+                                   if any(term in doc.lower() for term in ["resume", "cv", "vikranth", "reddim"])]
+                
+                if potential_resumes:
+                    logger.info(f"User asked about resume. Potential resume documents: {potential_resumes}")
+                    # Check if we retrieved from any resume-like document
+                    retrieved_resumes = [doc for doc in source_groups.keys() 
+                                        if any(term in doc.lower() for term in ["resume", "cv", "vikranth", "reddim"])]
+                    
+                    if not retrieved_resumes:
+                        logger.warning(f"User asked about resume but no resume chunks retrieved. Available: {potential_resumes}, Retrieved: {list(source_groups.keys())}")
+                        logger.warning("Falling back to custom RAG for better multi-document handling.")
+                        if hasattr(self, "_fallback_rag"):
+                            return await self._fallback_rag.query(notebook_id, question, top_k)
+                    elif len(potential_resumes) > len(retrieved_resumes):
+                        # We have resume documents but didn't retrieve from all of them
+                        missing_resumes = set(potential_resumes) - set(retrieved_resumes)
+                        logger.warning(f"Some resume documents not retrieved: {missing_resumes}. Falling back to custom RAG.")
+                        if hasattr(self, "_fallback_rag"):
+                            return await self._fallback_rag.query(notebook_id, question, top_k)
+            
+            # Original fallback logic for other missing documents
             if missing_docs:
                 logger.warning(f"Warning: No chunks retrieved from these documents: {missing_docs}")
                 logger.warning(f"Available documents: {list(doc_sources.keys())}")
                 logger.warning(f"Retrieved from: {list(source_groups.keys())}")
                 # If user is asking about a missing document, fall back to custom RAG
-                question_lower = question.lower()
                 for missing_doc in missing_docs:
                     missing_lower = missing_doc.lower()
                     # Check if question mentions the missing document
-                    if any(keyword in question_lower for keyword in ["resume", "cv", "other document", "second document", "other file"]):
-                        if "resume" in missing_lower or "cv" in missing_lower or "vikranth" in missing_lower:
-                            logger.warning(f"User is asking about '{missing_doc}' but no chunks were retrieved. Falling back to custom RAG.")
-                            if hasattr(self, "_fallback_rag"):
-                                return await self._fallback_rag.query(notebook_id, question, top_k)
+                    if any(keyword in question_lower for keyword in ["other document", "second document", "other file", "the other"]):
+                        logger.warning(f"User is asking about '{missing_doc}' but no chunks were retrieved. Falling back to custom RAG.")
+                        if hasattr(self, "_fallback_rag"):
+                            return await self._fallback_rag.query(notebook_id, question, top_k)
             
             # Enhance the question with multi-document awareness
             # Include ALL documents (not just retrieved ones) so LLM knows what's available
