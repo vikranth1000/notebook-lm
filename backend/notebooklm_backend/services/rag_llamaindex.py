@@ -30,7 +30,6 @@ class LlamaIndexRAGService:
             from llama_index.vector_stores.chroma import ChromaVectorStore
             from llama_index.core import VectorStoreIndex, Settings
             from llama_index.llms.ollama import Ollama
-            from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
             logger.info(f"LlamaIndex RAG query for notebook {notebook_id[:8]}...")
 
@@ -45,9 +44,31 @@ class LlamaIndexRAGService:
                     sources=[],
                 )
 
-            # Use the same embedding model as our vector store
-            embedding_model = HuggingFaceEmbedding(model_name=self.settings.embedding_model)
-            Settings.embed_model = embedding_model
+            # Use sentence-transformers directly (we already have it installed)
+            # This matches the embedding model used during ingestion
+            try:
+                from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+                embedding_model = HuggingFaceEmbedding(model_name=self.settings.embedding_model)
+                Settings.embed_model = embedding_model
+            except ImportError:
+                # Fallback: use sentence-transformers directly if HuggingFaceEmbedding not available
+                logger.warning("HuggingFaceEmbedding not available, using sentence-transformers directly")
+                from sentence_transformers import SentenceTransformer
+                from llama_index.core.embeddings import BaseEmbedding
+                
+                class SentenceTransformerEmbedding(BaseEmbedding):
+                    def __init__(self, model_name: str):
+                        super().__init__()
+                        self._model = SentenceTransformer(model_name)
+                    
+                    def _get_query_embedding(self, query: str) -> list[float]:
+                        return self._model.encode(query).tolist()
+                    
+                    def _get_text_embedding(self, text: str) -> list[float]:
+                        return self._model.encode(text).tolist()
+                
+                embedding_model = SentenceTransformerEmbedding(self.settings.embedding_model)
+                Settings.embed_model = embedding_model
 
             li_store = ChromaVectorStore(chroma_collection=collection)
 
