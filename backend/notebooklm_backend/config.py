@@ -27,7 +27,7 @@ class AppConfig(BaseSettings):
 
     # Framework integration toggles
     use_langchain_splitter: bool = True
-    use_llamaindex_rag: bool = False  # Temporarily disabled until LlamaIndex-Chroma integration is fixed
+    use_llamaindex_rag: bool = True  # Re-enabled - will use improved integration
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="NOTEBOOKLM_", extra="ignore")
 

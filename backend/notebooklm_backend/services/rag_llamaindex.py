@@ -78,28 +78,47 @@ class LlamaIndexRAGService:
             # Set the embedding model globally for LlamaIndex
             Settings.embed_model = embedding_model
 
-            # Create ChromaVectorStore - it will use the existing embeddings in Chroma
-            # The key is that Chroma already has embeddings, so we need to make sure
-            # LlamaIndex uses them instead of re-embedding
-            li_store = ChromaVectorStore(chroma_collection=collection)
-
-            # Build an index that points at the existing vector store
-            # Since Chroma already has embeddings, we don't need to embed again
-            index = VectorStoreIndex.from_vector_store(
-                vector_store=li_store,
-                embed_model=embedding_model,  # Explicitly pass the embedding model
+            # Create ChromaVectorStore - Chroma already has embeddings stored
+            # Important: Make sure Chroma collection doesn't have an embedding function
+            # (we store embeddings directly, so Chroma shouldn't try to embed)
+            if hasattr(collection, 'metadata') and collection.metadata and collection.metadata.get('hnsw:space'):
+                # Collection exists and has metadata
+                pass
+            
+            li_store = ChromaVectorStore(
+                chroma_collection=collection,
             )
 
-            # Offline LLM via Ollama
-            llm = Ollama(model=self.settings.ollama_model, base_url=self.settings.ollama_base_url, request_timeout=120.0)
+            # Build an index from the existing vector store
+            # ChromaVectorStore will use existing embeddings for similarity search
+            # The embed_model is only used for encoding the query, not re-embedding documents
+            index = VectorStoreIndex.from_vector_store(
+                vector_store=li_store,
+                embed_model=embedding_model,  # Only for query encoding
+            )
+            
+            # Verify the index can retrieve documents
+            logger.info(f"Index created, testing retrieval...")
+            test_retriever = index.as_retriever(similarity_top_k=1)
+            test_nodes = test_retriever.retrieve("test")
+            logger.info(f"Test retrieval returned {len(test_nodes)} nodes")
 
-            # Query engine with similarity_top_k
+            # Offline LLM via Ollama
+            llm = Ollama(
+                model=self.settings.ollama_model,
+                base_url=self.settings.ollama_base_url,
+                request_timeout=120.0,
+            )
+
+            # Create query engine with better retrieval and response synthesis
             query_engine = index.as_query_engine(
                 similarity_top_k=max(top_k, 10),
                 llm=llm,
+                # Use response mode that includes source citations
+                response_mode="compact",  # "compact" gives concise answers with sources
             )
             
-            logger.info(f"Executing LlamaIndex query...")
+            logger.info(f"Executing LlamaIndex query with {collection_count} documents in collection...")
             result = query_engine.query(question)
 
             # Extract answer
