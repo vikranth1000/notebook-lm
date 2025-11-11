@@ -30,10 +30,20 @@ def create_app() -> FastAPI:
     embedding_backend = create_embedding_backend(settings)
     vector_store = create_vector_store(settings, embedding_backend)
     # Choose RAG engine based on settings (default to LlamaIndex if enabled)
+    # Create both services, but use LlamaIndex as primary with custom RAG as fallback
+    custom_rag_service = RAGService(settings, vector_store)
     if settings.use_llamaindex_rag:
-        rag_service = LlamaIndexRAGService(settings, vector_store)
+        try:
+            rag_service = LlamaIndexRAGService(settings, vector_store)
+            # Store custom RAG as fallback in the service for error recovery
+            rag_service._fallback_rag = custom_rag_service
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to initialize LlamaIndex RAG, falling back to custom RAG: {e}")
+            rag_service = custom_rag_service
     else:
-        rag_service = RAGService(settings, vector_store)
+        rag_service = custom_rag_service
     
     app.state.settings = settings
     app.state.chat_service = ChatService(create_llm_backend(settings), settings, rag_service=rag_service)

@@ -36,13 +36,18 @@ class ChatService:
                     recent_context = "\n".join([f"{msg.role}: {msg.content}" for msg in list(history)[-3:]])
                     full_question = f"Previous conversation:\n{recent_context}\n\nCurrent question: {prompt}"
                 
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"Using RAG for notebook {notebook_id[:8]}...")
                 rag_result = await self._rag_service.query(notebook_id=notebook_id, question=full_question, top_k=20)
+                logger.info(f"RAG query successful, answer length: {len(rag_result.answer)}")
                 # Use RAG answer as the response
                 return rag_result.answer
             except Exception as e:
                 # Log error but fall back to regular chat
                 import logging
-                logging.warning(f"RAG query failed: {e}")
+                logger = logging.getLogger(__name__)
+                logger.error(f"RAG query failed: {e}", exc_info=True)
                 # Fall back to regular chat if RAG fails
                 pass
         
