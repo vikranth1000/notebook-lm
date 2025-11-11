@@ -46,10 +46,10 @@ class LlamaIndexRAGService:
 
             # Use sentence-transformers directly (we already have it installed)
             # This matches the embedding model used during ingestion
+            # IMPORTANT: We need to use the same embedding model for queries that was used during ingestion
             try:
                 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
                 embedding_model = HuggingFaceEmbedding(model_name=self.settings.embedding_model)
-                Settings.embed_model = embedding_model
             except ImportError:
                 # Fallback: use sentence-transformers directly if HuggingFaceEmbedding not available
                 logger.warning("HuggingFaceEmbedding not available, using sentence-transformers directly")
@@ -61,6 +61,12 @@ class LlamaIndexRAGService:
                         super().__init__()
                         self._model = SentenceTransformer(model_name)
                     
+                    async def _aget_query_embedding(self, query: str) -> list[float]:
+                        return self._model.encode(query).tolist()
+                    
+                    async def _aget_text_embedding(self, text: str) -> list[float]:
+                        return self._model.encode(text).tolist()
+                    
                     def _get_query_embedding(self, query: str) -> list[float]:
                         return self._model.encode(query).tolist()
                     
@@ -68,12 +74,21 @@ class LlamaIndexRAGService:
                         return self._model.encode(text).tolist()
                 
                 embedding_model = SentenceTransformerEmbedding(self.settings.embedding_model)
-                Settings.embed_model = embedding_model
+            
+            # Set the embedding model globally for LlamaIndex
+            Settings.embed_model = embedding_model
 
+            # Create ChromaVectorStore - it will use the existing embeddings in Chroma
+            # The key is that Chroma already has embeddings, so we need to make sure
+            # LlamaIndex uses them instead of re-embedding
             li_store = ChromaVectorStore(chroma_collection=collection)
 
             # Build an index that points at the existing vector store
-            index = VectorStoreIndex.from_vector_store(li_store)
+            # Since Chroma already has embeddings, we don't need to embed again
+            index = VectorStoreIndex.from_vector_store(
+                vector_store=li_store,
+                embed_model=embedding_model,  # Explicitly pass the embedding model
+            )
 
             # Offline LLM via Ollama
             llm = Ollama(model=self.settings.ollama_model, base_url=self.settings.ollama_base_url, request_timeout=120.0)
