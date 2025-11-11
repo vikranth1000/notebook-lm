@@ -131,17 +131,20 @@ class LlamaIndexRAGService:
             # Use a multiplier based on number of documents
             retrieval_top_k = max(top_k, 20, len(doc_sources) * 10)  # At least 10 chunks per document
             
-            # Create a custom retriever to get more context
+            # For multi-document scenarios, ensure we retrieve chunks from ALL documents
+            # This prevents bias towards documents with more chunks
+            # Strategy: Retrieve top-k chunks, then ensure we have at least some chunks from each document
+            
+            # First, do a normal retrieval
             retriever = index.as_retriever(
                 similarity_top_k=retrieval_top_k,
             )
             
-            # Retrieve nodes first to analyze source distribution
             logger.info(f"Retrieving top {retrieval_top_k} chunks for query...")
             retrieved_nodes = retriever.retrieve(question)
             logger.info(f"Retrieved {len(retrieved_nodes)} nodes")
             
-            # Group nodes by source to understand document diversity
+            # Group nodes by source to understand document distribution
             source_groups = defaultdict(list)
             for node_with_score in retrieved_nodes:
                 node = node_with_score.node if hasattr(node_with_score, "node") else node_with_score
@@ -152,50 +155,56 @@ class LlamaIndexRAGService:
             
             logger.info(f"Found content from {len(source_groups)} different documents: {list(source_groups.keys())}")
             
-            # If we're missing documents in retrieval, this is a problem
-            # The query might not find relevant content from all documents
+            # If we have multiple documents but retrieval missed some, do per-document retrieval
+            # This ensures we get at least some chunks from each document
             missing_docs = set(doc_sources.keys()) - set(source_groups.keys())
-            question_lower = question.lower()
-            
-            # More aggressive fallback: if user asks about resume/CV and we have multiple documents,
-            # check if any document looks like a resume (by filename) and ensure we retrieved from it
-            resume_keywords = ["resume", "cv", "curriculum vitae", "my resume", "the resume"]
-            if any(keyword in question_lower for keyword in resume_keywords):
-                # Find documents that might be resumes (by filename)
-                potential_resumes = [doc for doc in doc_sources.keys() 
-                                   if any(term in doc.lower() for term in ["resume", "cv", "vikranth", "reddim"])]
+            if len(doc_sources) > 1 and missing_docs:
+                logger.info(f"Multi-document scenario detected. Missing chunks from: {missing_docs}")
+                logger.info("Performing per-document retrieval to ensure balanced coverage...")
                 
-                if potential_resumes:
-                    logger.info(f"User asked about resume. Potential resume documents: {potential_resumes}")
-                    # Check if we retrieved from any resume-like document
-                    retrieved_resumes = [doc for doc in source_groups.keys() 
-                                        if any(term in doc.lower() for term in ["resume", "cv", "vikranth", "reddim"])]
+                # For each missing document, retrieve at least a few chunks
+                chunks_per_doc = max(3, retrieval_top_k // len(doc_sources))  # At least 3 chunks per doc
+                for missing_doc_name in missing_docs:
+                    # Find the source path for this document
+                    missing_source_path = None
+                    for meta in all_metadatas:
+                        if isinstance(meta, dict):
+                            source_path = meta.get("source_path", "unknown")
+                            source_name = Path(source_path).name if source_path != "unknown" else "Document"
+                            if source_name == missing_doc_name:
+                                missing_source_path = source_path
+                                break
                     
-                    if not retrieved_resumes:
-                        logger.warning(f"User asked about resume but no resume chunks retrieved. Available: {potential_resumes}, Retrieved: {list(source_groups.keys())}")
-                        logger.warning("Falling back to custom RAG for better multi-document handling.")
-                        if hasattr(self, "_fallback_rag"):
-                            return await self._fallback_rag.query(notebook_id, question, top_k)
-                    elif len(potential_resumes) > len(retrieved_resumes):
-                        # We have resume documents but didn't retrieve from all of them
-                        missing_resumes = set(potential_resumes) - set(retrieved_resumes)
-                        logger.warning(f"Some resume documents not retrieved: {missing_resumes}. Falling back to custom RAG.")
-                        if hasattr(self, "_fallback_rag"):
-                            return await self._fallback_rag.query(notebook_id, question, top_k)
+                    if missing_source_path:
+                        # Query specifically for this document by including its name in the query
+                        doc_specific_query = f"{question} {missing_doc_name}"
+                        doc_nodes = retriever.retrieve(doc_specific_query)
+                        
+                        # Filter to only nodes from this document
+                        for node_with_score in doc_nodes:
+                            node = node_with_score.node if hasattr(node_with_score, "node") else node_with_score
+                            meta = getattr(node, "metadata", {}) or {}
+                            node_source_path = str(meta.get("source_path", "unknown"))
+                            node_source_name = Path(node_source_path).name if node_source_path != "unknown" else "Document"
+                            
+                            if node_source_name == missing_doc_name:
+                                source_groups[missing_doc_name].append(node_with_score)
+                                if len(source_groups[missing_doc_name]) >= chunks_per_doc:
+                                    break
+                        
+                        logger.info(f"Retrieved {len(source_groups[missing_doc_name])} chunks from {missing_doc_name}")
+                
+                # Re-log the updated distribution
+                logger.info(f"After per-document retrieval, found content from {len(source_groups)} documents: {list(source_groups.keys())}")
             
-            # Original fallback logic for other missing documents
-            if missing_docs:
-                logger.warning(f"Warning: No chunks retrieved from these documents: {missing_docs}")
-                logger.warning(f"Available documents: {list(doc_sources.keys())}")
-                logger.warning(f"Retrieved from: {list(source_groups.keys())}")
-                # If user is asking about a missing document, fall back to custom RAG
-                for missing_doc in missing_docs:
-                    missing_lower = missing_doc.lower()
-                    # Check if question mentions the missing document
-                    if any(keyword in question_lower for keyword in ["other document", "second document", "other file", "the other"]):
-                        logger.warning(f"User is asking about '{missing_doc}' but no chunks were retrieved. Falling back to custom RAG.")
-                        if hasattr(self, "_fallback_rag"):
-                            return await self._fallback_rag.query(notebook_id, question, top_k)
+            # If we still have missing documents after per-document retrieval, 
+            # fall back to custom RAG which handles multi-document scenarios better
+            final_missing = set(doc_sources.keys()) - set(source_groups.keys())
+            if len(doc_sources) > 1 and final_missing:
+                logger.warning(f"Still missing chunks from documents: {final_missing} after per-document retrieval.")
+                logger.warning(f"This might cause incomplete answers. Falling back to custom RAG for better multi-document handling.")
+                if hasattr(self, "_fallback_rag"):
+                    return await self._fallback_rag.query(notebook_id, question, top_k)
             
             # Enhance the question with multi-document awareness
             # Include ALL documents (not just retrieved ones) so LLM knows what's available
