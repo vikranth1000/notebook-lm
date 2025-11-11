@@ -10,6 +10,7 @@ from .services.embeddings import create_embedding_backend
 from .services.ingestion import IngestionService
 from .services.llm import create_llm_backend
 from .services.rag import RAGService
+from .services.rag_llamaindex import LlamaIndexRAGService
 from .services.vector_store import create_vector_store
 
 
@@ -28,7 +29,11 @@ def create_app() -> FastAPI:
     # Bootstrap services
     embedding_backend = create_embedding_backend(settings)
     vector_store = create_vector_store(settings, embedding_backend)
-    rag_service = RAGService(settings, vector_store)
+    # Choose RAG engine based on settings (default to LlamaIndex if enabled)
+    if settings.use_llamaindex_rag:
+        rag_service = LlamaIndexRAGService(settings, vector_store)
+    else:
+        rag_service = RAGService(settings, vector_store)
     
     app.state.settings = settings
     app.state.chat_service = ChatService(create_llm_backend(settings), settings, rag_service=rag_service)

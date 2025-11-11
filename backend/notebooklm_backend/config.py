@@ -25,6 +25,10 @@ class AppConfig(BaseSettings):
     llm_context_window: int = 2048
     llm_max_tokens: int = 2048
 
+    # Framework integration toggles
+    use_langchain_splitter: bool = True
+    use_llamaindex_rag: bool = True
+
     model_config = SettingsConfigDict(env_file=".env", env_prefix="NOTEBOOKLM_", extra="ignore")
 
     def ensure_directories(self) -> None:

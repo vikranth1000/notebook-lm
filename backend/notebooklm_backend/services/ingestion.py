@@ -6,6 +6,7 @@ from typing import Iterable
 
 from ..config import AppConfig
 from .chunking import TextChunk, chunk_text
+from .chunking_lc import lc_split_text_to_chunks
 from .document_loader import LoadedDocument, DocumentLoaderError, iter_supported_files, load_document
 from .vector_store import VectorStoreManager
 
@@ -54,5 +55,12 @@ class IngestionService:
 
     def _chunk_document(self, document: LoadedDocument) -> Iterable[TextChunk]:
         relative_path = str(document.path)
+        # Prefer LangChain splitter if enabled and available
+        if self.settings.use_langchain_splitter:
+            try:
+                return list(lc_split_text_to_chunks(document.text, source_path=relative_path))
+            except Exception:
+                # Fall back to simple splitter if LC is unavailable
+                pass
         return chunk_text(document.text, source_path=relative_path)
 
