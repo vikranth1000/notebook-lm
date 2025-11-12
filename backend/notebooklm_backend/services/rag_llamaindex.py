@@ -230,6 +230,38 @@ class LlamaIndexRAGService:
             
             # If using two-stage retrieval, filter to only relevant documents
             if use_two_stage and relevant_source_paths:
+                # Filter source_groups to only include relevant documents
+                # Match by both full path and filename
+                filtered_source_groups = defaultdict(list)
+                for source_name, nodes in source_groups.items():
+                    # Check if this document matches any of the relevant summaries
+                    matches = False
+                    for summary in relevant_summaries:
+                        summary_source_name = Path(summary.source_path).name if summary.source_path != "unknown" else "Document"
+                        # Match by filename
+                        if source_name == summary_source_name:
+                            matches = True
+                            break
+                        # Also check if source_name matches the full path (for absolute paths)
+                        if summary.source_path in source_name or source_name in summary.source_path:
+                            matches = True
+                            break
+                    
+                    if matches:
+                        filtered_source_groups[source_name] = nodes
+                
+                if filtered_source_groups:
+                    logger.info(f"Two-stage filtering: Keeping {len(filtered_source_groups)} relevant documents: {list(filtered_source_groups.keys())}")
+                    source_groups = filtered_source_groups
+                    # Rebuild retrieved_nodes from filtered groups
+                    retrieved_nodes = []
+                    for nodes in source_groups.values():
+                        retrieved_nodes.extend(nodes)
+                    retrieved_nodes = retrieved_nodes[:retrieval_top_k]
+                    logger.info(f"After filtering: {len(retrieved_nodes)} nodes from {len(source_groups)} documents")
+                else:
+                    logger.warning("Two-stage filtering removed all documents, falling back to original results")
+                    use_two_stage = False
             
             # If we have multiple documents but retrieval missed some, do per-document retrieval
             # This ensures we get at least some chunks from each document
