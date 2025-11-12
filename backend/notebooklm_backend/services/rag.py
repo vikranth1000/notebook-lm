@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
@@ -20,6 +21,14 @@ class SourceAttribution:
 class RAGResponse:
     answer: str
     sources: List[SourceAttribution]
+    metrics: dict[str, float] | None = None
+
+
+@dataclass
+class RAGContext:
+    prompt: str
+    sources: List[SourceAttribution]
+    metrics: dict[str, float]
 
 
 class RAGService:
@@ -33,68 +42,81 @@ class RAGService:
             self._llm = create_llm_backend(self.settings)
         return self._llm
 
-    async def query(self, notebook_id: str, question: str, top_k: int = 5) -> RAGResponse:
-        """
-        Two-stage RAG query:
-        1. Stage 1 (Coarse): Filter documents by summary similarity
-        2. Stage 2 (Fine): Retrieve chunks only from relevant documents
-        """
+    async def prepare_prompt(self, notebook_id: str, question: str, top_k: int = 5) -> RAGContext:
+        """Prepare the grounded prompt, sources, and retrieval metrics."""
+        total_start = time.perf_counter()
+        metrics: dict[str, float] = {}
         # Stage 1: Query document summaries to find relevant documents
+        stage1_start = time.perf_counter()
         relevant_summaries = self.vector_store.query_document_summaries(
             notebook_id=notebook_id,
             query=question,
             top_k=3,  # Get top 3 most relevant documents
         )
+        metrics["stage1_ms"] = (time.perf_counter() - stage1_start) * 1000
         
-        # If we have summaries, use two-stage retrieval
+        # If we have summaries, use two-stage retrieval with strict per-document queries
         if relevant_summaries:
             import logging
             logger = logging.getLogger(__name__)
             logger.info(f"Two-stage retrieval: Found {len(relevant_summaries)} relevant documents")
-            
-            # Stage 2: Query chunks only from relevant documents
-            # We'll filter by source_path in the query results
-            query_results = self.vector_store.query(notebook_id=notebook_id, query=question, top_k=top_k * 2)
-            
-            # Filter to only include chunks from relevant documents
-            relevant_source_paths = {s.source_path for s in relevant_summaries}
-            documents = query_results.get("documents", [[]])[0]
-            metadatas = query_results.get("metadatas", [[]])[0]
-            distances = query_results.get("distances", [[]])[0] if query_results.get("distances") else []
-            
-            # Filter chunks by source
-            filtered_docs = []
-            filtered_metas = []
-            filtered_dists = []
-            
-            for doc, meta, dist in zip(documents, metadatas, distances):
-                source_path = meta.get("source_path", "unknown") if isinstance(meta, dict) else "unknown"
-                if source_path in relevant_source_paths:
-                    filtered_docs.append(doc)
-                    filtered_metas.append(meta)
-                    filtered_dists.append(dist)
-            
-            # If filtering removed too many chunks, fall back to original results
-            if len(filtered_docs) < top_k // 2:
-                logger.warning(f"Filtered too many chunks ({len(filtered_docs)}), using original results")
-                documents = query_results.get("documents", [[]])[0]
-                metadatas = query_results.get("metadatas", [[]])[0]
-                distances = query_results.get("distances", [[]])[0] if query_results.get("distances") else []
-            else:
-                documents = filtered_docs[:top_k]
-                metadatas = filtered_metas[:top_k]
-                distances = filtered_dists[:top_k]
+
+            # Select top-N documents
+            doc_select_k = max(1, self.settings.rag_doc_select_k)
+            selected = relevant_summaries[:doc_select_k]
+            selected_paths = [s.source_path for s in selected]
+
+            # Stage 2: query each selected document separately
+            retrieval_start = time.perf_counter()
+            per_doc = max(1, (self.settings.rag_top_k or top_k) // len(selected_paths))
+            documents: list[str] = []
+            metadatas: list[dict] = []
+            distances: list[float] = []
+
+            for spath in selected_paths:
+                try:
+                    res = self.vector_store.query(
+                        notebook_id=notebook_id,
+                        query=question,
+                        top_k=per_doc,
+                        where={"source_path": {"$eq": spath}},
+                    )
+                    docs = res.get("documents", [[]])[0]
+                    metas = res.get("metadatas", [[]])[0]
+                    dists = res.get("distances", [[]])[0] if res.get("distances") else []
+                except Exception:
+                    # Fallback: unfiltered query + manual filter
+                    res = self.vector_store.query(notebook_id=notebook_id, query=question, top_k=per_doc * 2)
+                    docs = res.get("documents", [[]])[0]
+                    metas = res.get("metadatas", [[]])[0]
+                    dists = res.get("distances", [[]])[0] if res.get("distances") else []
+                    filtered = [(d, m, dists[i] if i < len(dists) else None) for i, (d, m) in enumerate(zip(docs, metas)) if isinstance(m, dict) and m.get("source_path") == spath]
+                    if filtered:
+                        docs, metas, dists = zip(*filtered)
+                        docs, metas, dists = list(docs), list(metas), list(dists)
+                    else:
+                        docs, metas, dists = [], [], []
+
+                documents.extend(docs[:per_doc])
+                metadatas.extend(metas[:per_doc])
+                # distances may be None if not available; normalize
+                distances.extend([(d or 0.0) for d in dists[:per_doc]])
+
+            metrics["retrieval_ms"] = (time.perf_counter() - retrieval_start) * 1000
         else:
             # Fallback to single-stage if no summaries available
+            retrieval_start = time.perf_counter()
             query_results = self.vector_store.query(notebook_id=notebook_id, query=question, top_k=max(top_k, 20))
+            metrics["retrieval_ms"] = (time.perf_counter() - retrieval_start) * 1000
             documents = query_results.get("documents", [[]])[0]
             metadatas = query_results.get("metadatas", [[]])[0]
             distances = query_results.get("distances", [[]])[0] if query_results.get("distances") else []
 
         if not documents:
-            return RAGResponse(
-                answer="No relevant documents found in the notebook. Make sure you have uploaded documents.",
+            return RAGContext(
+                prompt="",
                 sources=[],
+                metrics=metrics,
             )
 
         # Group chunks by source file to understand document diversity
@@ -105,7 +127,7 @@ class RAGService:
                 source_groups[source_path] = []
             source_groups[source_path].append((idx, doc))
         
-        # Build context with source information
+        # Build context with strict source separation
         prompt_parts = []
         for source_path, chunks in source_groups.items():
             source_name = Path(source_path).name if source_path != "unknown" else "Document"
@@ -116,35 +138,20 @@ class RAGService:
         
         prompt_context = "\n".join(prompt_parts)
         
-        # Unified prompt that works for all document types and question types
-        # The LLM will naturally understand the user's intent from their question
+        # Strict prompt that prevents cross-document mixing
+        selected_names = ", ".join([Path(sp).name for sp in source_groups.keys()])
         prompt = (
-            "You are a helpful assistant. The user has uploaded one or more documents and is asking questions about them. "
-            "Answer their question using ONLY the information provided in the document excerpts below.\n\n"
-            "Important: The user may have multiple documents uploaded. Pay attention to which document(s) are most relevant to their question. "
-            "If they mention a specific document type (e.g., 'research paper', 'resume'), focus on content from that type of document.\n\n"
-            "Guidelines:\n"
-            "- Base your answer strictly on the provided document content\n"
-            "- If the question asks for analysis, feedback, or improvement, provide thoughtful insights based on the content\n"
-            "- If the question asks for a summary, provide a comprehensive overview\n"
-            "- If the question asks for specific information, extract and present it clearly\n"
-            "- Cite sources as [Source #] when referencing specific excerpts\n"
-            "- If the answer cannot be found in the provided content, say so clearly\n"
-            "- Be helpful, accurate, and specific\n\n"
-            f"Document excerpts:\n{prompt_context}\n\n"
-            f"User's question: {question}\n\n"
+            "You are answering a question using excerpts FROM SPECIFIC DOCUMENTS ONLY.\n"
+            f"Selected documents: {selected_names}.\n"
+            "Rules:\n"
+            "- Use only the excerpts from the selected documents below. Do not use outside knowledge.\n"
+            "- If the question refers to one document (e.g., a resume), ignore all others unless needed to clarify.\n"
+            "- If the answer is not present in the excerpts, reply: 'I could not find this in the provided documents.'\n"
+            "- When citing, use [Source #] as shown in the excerpts.\n\n"
+            f"Excerpts grouped by document:\n{prompt_context}\n"
+            f"Question: {question}\n\n"
             "Answer:"
         )
-
-        if self.settings.llm_provider == "none":
-            summary_lines = [
-                f"[Source {idx + 1}] {doc[:320]}{'...' if len(doc) > 320 else ''}"
-                for idx, doc in enumerate(documents)
-            ]
-            answer = "Offline summary (no LLM configured).\n" + "\n".join(summary_lines)
-        else:
-            llm = self._ensure_llm()
-            answer = await llm.generate(prompt, max_tokens=self.settings.llm_max_tokens)
 
         sources = [
             SourceAttribution(
@@ -155,5 +162,37 @@ class RAGService:
             for idx, (document, metadata) in enumerate(zip(documents, metadatas))
         ]
 
-        return RAGResponse(answer=answer, sources=sources)
+        metrics["prep_ms"] = (time.perf_counter() - total_start) * 1000
+        metrics["total_ms"] = metrics["prep_ms"]
+        if relevant_summaries:
+            metrics["documents_considered"] = float(len(relevant_summaries))
+        return RAGContext(prompt=prompt, sources=sources, metrics=metrics)
 
+    async def query(self, notebook_id: str, question: str, top_k: int = 5) -> RAGResponse:
+        """
+        Two-stage RAG query that returns the fully generated answer.
+        """
+        context = await self.prepare_prompt(notebook_id=notebook_id, question=question, top_k=top_k)
+        if not context.sources:
+            return RAGResponse(
+                answer="No relevant documents found in the notebook. Make sure you have uploaded documents.",
+                sources=[],
+                metrics=context.metrics,
+            )
+
+        metrics = context.metrics
+        if self.settings.llm_provider == "none":
+            summary_lines = [
+                f"[Source {idx + 1}] {src.content[:320]}{'...' if len(src.content) > 320 else ''}"
+                for idx, src in enumerate(context.sources)
+            ]
+            answer = "Offline summary (no LLM configured).\n" + "\n".join(summary_lines)
+            metrics["llm_ms"] = 0.0
+        else:
+            llm_start = time.perf_counter()
+            llm = self._ensure_llm()
+            answer = await llm.generate(context.prompt, max_tokens=self.settings.llm_max_tokens)
+            metrics["llm_ms"] = (time.perf_counter() - llm_start) * 1000
+            metrics["total_ms"] = metrics.get("total_ms", 0.0) + metrics["llm_ms"]
+
+        return RAGResponse(answer=answer, sources=context.sources, metrics=metrics)

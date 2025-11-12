@@ -19,3 +19,4 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     provider: str
+    metrics: dict[str, float] | None = Field(default=None, description="Latency metrics in milliseconds")

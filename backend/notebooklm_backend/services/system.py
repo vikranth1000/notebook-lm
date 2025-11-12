@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import platform
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def system_probe() -> str:
@@ -12,6 +12,5 @@ def system_probe() -> str:
     system = platform.system()
     release = platform.release()
     machine = platform.machine()
-    timestamp = datetime.utcnow().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
     return f"{system} {release} ({machine}) @ {timestamp}Z"
-

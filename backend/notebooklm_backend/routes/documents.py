@@ -8,6 +8,8 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from ..config import AppConfig
 from ..services.ingestion import IngestionService, IngestionResult
+from ..services.notebook_store import NotebookStore
+from ..models.notebook import NotebookIngestionRequest
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -23,6 +25,7 @@ async def ingest_document(
     """
     settings: AppConfig = request.app.state.settings
     ingestion_service: IngestionService = request.app.state.ingestion_service
+    notebook_store: NotebookStore = request.app.state.notebook_store
     
     if not notebook_id:
         notebook_id = uuid.uuid4().hex
@@ -43,6 +46,7 @@ async def ingest_document(
         file_path = uploads_dir / f"{base_name}_{counter}{file_extension}"
         counter += 1
     
+    job = None
     try:
         with open(file_path, "wb") as f:
             content = await file.read()
@@ -56,11 +60,26 @@ async def ingest_document(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
     
+    ingestion_request = NotebookIngestionRequest(
+        notebook_id=notebook_id,
+        path=str(file_path),
+        title=base_name,
+        description=f"Uploaded via desktop UI ({original_filename})",
+    )
+
     try:
+        job = notebook_store.start_ingestion(ingestion_request)
+        notebook_id = job.notebook_id
         result: IngestionResult = await ingestion_service.ingest_path(
             notebook_id=notebook_id,
             path=file_path,
             recursive=False,
+        )
+        notebook_store.complete_ingestion(
+            job.job_id,
+            message="Ingestion completed",
+            source_count=result.documents_processed,
+            chunk_count=result.chunks_indexed,
         )
         
         # Verify file still exists after ingestion
@@ -75,6 +94,8 @@ async def ingest_document(
             }
         )
     except Exception as e:
+        if job:
+            notebook_store.fail_ingestion(job.job_id, str(e))
         # Don't delete files on error - we need them for preview
         # Even if ingestion fails, the file should be available for preview
         import logging

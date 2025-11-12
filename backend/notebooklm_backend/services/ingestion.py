@@ -69,12 +69,31 @@ class IngestionService:
 
     def _chunk_document(self, document: LoadedDocument) -> Iterable[TextChunk]:
         relative_path = str(document.path)
+        chunk_size, chunk_overlap = self._chunk_params(document.path)
         # Prefer LangChain splitter if enabled and available
         if self.settings.use_langchain_splitter:
             try:
-                return list(lc_split_text_to_chunks(document.text, source_path=relative_path))
+                return list(
+                    lc_split_text_to_chunks(
+                        document.text,
+                        source_path=relative_path,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_overlap,
+                    )
+                )
             except Exception:
                 # Fall back to simple splitter if LC is unavailable
                 pass
-        return chunk_text(document.text, source_path=relative_path)
+        return chunk_text(document.text, source_path=relative_path, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
+    def _chunk_params(self, path: Path) -> tuple[int, int]:
+        suffix = path.suffix.lower()
+        if suffix in {".md", ".txt"}:
+            return (900, 150)
+        if suffix in {".pdf", ".docx"}:
+            return (600, 120)
+        if suffix in {".pptx"}:
+            return (700, 120)
+        if suffix in {".py", ".ts", ".js"}:
+            return (320, 40)
+        return (700, 100)

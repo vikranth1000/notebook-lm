@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, TYPE_CHECKING
 import logging
 
 from ..config import AppConfig
 from .vector_store import VectorStoreManager
-from .rag import RAGResponse, SourceAttribution
+from .rag import RAGResponse, SourceAttribution, RAGContext
+
+if TYPE_CHECKING:
+    from .rag import RAGService
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +23,17 @@ class LlamaIndexRAGService:
     def __init__(self, settings: AppConfig, vector_store: VectorStoreManager) -> None:
         self.settings = settings
         self.vector_store = vector_store
+        self._fallback_rag: "RAGService | None" = None
+
+    async def prepare_prompt(self, notebook_id: str, question: str, top_k: int = 5) -> RAGContext:
+        # Reuse the custom RAG selection/prompt logic to ensure consistent streaming behavior
+        if self._fallback_rag:
+            return await self._fallback_rag.prepare_prompt(
+                notebook_id=notebook_id,
+                question=question,
+                top_k=top_k,
+            )
+        raise RuntimeError("prepare_prompt requires a fallback RAG service")
 
     async def query(self, notebook_id: str, question: str, top_k: int = 10) -> RAGResponse:
         """
@@ -381,5 +395,3 @@ class LlamaIndexRAGService:
                 logger.info("Falling back to custom RAG service")
                 return await self._fallback_rag.query(notebook_id, question, top_k)
             raise
-
-

@@ -49,30 +49,41 @@ class DocumentSummaryService:
             "Summary:"
         )
         
+        if self.settings.llm_provider == "none":
+            return self._fallback_summary(preview_text, source_path)
+
         try:
             llm = self._ensure_llm()
             summary = await llm.generate(prompt, max_tokens=150)  # Short summary
-            summary = summary.strip()
-            
-            # Infer document type from summary or filename
-            doc_type = self._infer_document_type(summary, source_path)
-            
-            return DocumentSummary(
-                source_path=source_path,
-                summary=summary,
-                chunk_count=0,  # Will be set by caller
-                document_type=doc_type,
-            )
+            summary = (summary or "").strip()
+            if not summary:
+                return self._fallback_summary(preview_text, source_path)
         except Exception as e:
             logger.warning(f"Failed to generate summary for {source_path}: {e}")
-            # Fallback: use filename and text preview
-            fallback_summary = f"Document: {Path(source_path).name}. Content preview: {preview_text[:100]}..."
-            return DocumentSummary(
-                source_path=source_path,
-                summary=fallback_summary,
-                chunk_count=0,
-                document_type=None,
-            )
+            return self._fallback_summary(preview_text, source_path)
+
+        doc_type = self._infer_document_type(summary, source_path)
+
+        return DocumentSummary(
+            source_path=source_path,
+            summary=summary,
+            chunk_count=0,  # Will be set by caller
+            document_type=doc_type,
+        )
+
+    def _fallback_summary(self, preview_text: str, source_path: str) -> DocumentSummary:
+        """Generate a deterministic summary without calling an LLM."""
+        snippet = preview_text.splitlines()[0] if preview_text else ""
+        if len(snippet) > 160:
+            snippet = snippet[:157] + "..."
+        filename = Path(source_path).name or "document"
+        summary = f"{filename}: {snippet or 'Text document ingested offline.'}"
+        return DocumentSummary(
+            source_path=source_path,
+            summary=summary,
+            chunk_count=0,
+            document_type=self._infer_document_type(summary, source_path),
+        )
     
     def _infer_document_type(self, summary: str, source_path: str) -> str | None:
         """Infer document type from summary text or filename."""
@@ -92,4 +103,3 @@ class DocumentSummaryService:
             return "presentation"
         
         return None
-

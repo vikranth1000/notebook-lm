@@ -10,7 +10,10 @@ from notebooklm_backend.config import reset_settings_cache
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    """Create a TestClient with deterministic config and no Ollama requirement."""
+    monkeypatch.setenv("NOTEBOOKLM_LLM_PROVIDER", "none")
+    monkeypatch.delenv("NOTEBOOKLM_OLLAMA_MODEL", raising=False)
     reset_settings_cache()
     app = create_app()
     return TestClient(app)
@@ -56,3 +59,4 @@ def test_chat_endpoint_with_ollama(client):
     data = response.json()
     assert data["provider"] == "ollama"
     assert len(data["reply"]) > 0
+os.environ.setdefault("NOTEBOOKLM_LLM_PROVIDER", "none")

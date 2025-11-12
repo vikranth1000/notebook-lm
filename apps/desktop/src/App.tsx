@@ -1,8 +1,28 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
 
-import { fetchConfig, sendChatMessage, uploadDocument, listDocuments, getDocumentPreviewUrl } from './api';
-import type { BackendConfig, ChatMessage, DocumentInfo } from './types';
+import {
+  fetchConfig,
+  sendChatMessage,
+  uploadDocument,
+  listDocuments,
+  getDocumentPreviewUrl,
+  streamChatMessage,
+  fetchMetricsSummary,
+  exportConversation,
+  downloadNotebookSummaries,
+  transcribeAudio,
+  speakText,
+  requestAgentPlan,
+} from './api';
+import type {
+  BackendConfig,
+  ChatMessage,
+  DocumentInfo,
+  StreamSource,
+  ChatStreamEvent,
+  MetricsSummary,
+} from './types';
 import ReactMarkdown from 'react-markdown';
 import DocumentPreview from './DocumentPreview';
 
@@ -21,18 +41,45 @@ function App() {
   const [documents, setDocuments] = useState<DocumentInfo[]>([]);
   const [previewDocument, setPreviewDocument] = useState<DocumentInfo | null>(null);
   const [selectedDocumentIndex, setSelectedDocumentIndex] = useState<number | null>(null);
+  const [latestMetrics, setLatestMetrics] = useState<Record<string, number> | null>(null);
+  const [streamSources, setStreamSources] = useState<StreamSource[]>([]);
+  const [metricsSummary, setMetricsSummary] = useState<MetricsSummary | null>(null);
+  const [planGoal, setPlanGoal] = useState('');
+  const [agentPlan, setAgentPlan] = useState<string | null>(null);
+  const [isPlanning, setIsPlanning] = useState(false);
+  const [speechStatus, setSpeechStatus] = useState<string | null>(null);
+  const [ttsAudioUrl, setTtsAudioUrl] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const documentItemsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const assistantIndexRef = useRef<number | null>(null);
+  const assistantBufferRef = useRef<string>('');
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  const refreshMetricsSummary = useCallback(async () => {
+    try {
+      const summary = await fetchMetricsSummary();
+      setMetricsSummary(summary);
+    } catch (error) {
+      console.warn('Failed to load metrics summary', error);
+    }
+  }, []);
+
   useEffect(() => {
     scrollToBottom();
   }, [messages, isSubmitting]);
+
+  useEffect(() => {
+    return () => {
+      if (ttsAudioUrl) {
+        URL.revokeObjectURL(ttsAudioUrl);
+      }
+    };
+  }, [ttsAudioUrl]);
 
   useEffect(() => {
     if (status === 'ready') {
@@ -66,6 +113,7 @@ function App() {
         setConfig(cfg);
         setStatus('ready');
         inputRef.current?.focus();
+        refreshMetricsSummary();
       } catch (error) {
         console.error(error);
         setStatus('error');
@@ -74,35 +122,99 @@ function App() {
     }
 
     bootstrap();
-  }, []);
+  }, [refreshMetricsSummary]);
+
+  const updateAssistantMessage = (content: string) => {
+    setMessages((prev) => {
+      if (assistantIndexRef.current === null) {
+        return prev;
+      }
+      if (!prev[assistantIndexRef.current]) {
+        return prev;
+      }
+      const next = [...prev];
+      next[assistantIndexRef.current] = { ...next[assistantIndexRef.current], content };
+      return next;
+    });
+  };
 
   const handleSend = async () => {
     if (!input.trim() || isSubmitting) return;
 
-    const userMessage: ChatMessage = { role: 'user', content: input.trim() };
-    setMessages((prev) => [...prev, userMessage]);
+    const prompt = input.trim();
+    const userMessage: ChatMessage = { role: 'user', content: prompt };
+    const historyPayload = messages.map((m) => ({ role: m.role, content: m.content }));
     setInput('');
     inputRef.current?.focus();
     setIsSubmitting(true);
+    setLatestMetrics(null);
+    setStreamSources([]);
+    assistantBufferRef.current = '';
+
+    setMessages((prev) => {
+      const next = [...prev, userMessage];
+      const assistantIndex = next.length;
+      next.push({ role: 'assistant', content: '' });
+      assistantIndexRef.current = assistantIndex;
+      return next;
+    });
+
+    const body = {
+      prompt: userMessage.content,
+      history: historyPayload,
+      notebook_id: notebookId,
+    };
+
+    const handleStreamEvent = (event: ChatStreamEvent) => {
+      switch (event.type) {
+        case 'meta':
+          setStreamSources(event.sources ?? []);
+          if (event.metrics) {
+            setLatestMetrics(event.metrics);
+          }
+          break;
+        case 'token':
+          assistantBufferRef.current += event.delta;
+          updateAssistantMessage(assistantBufferRef.current);
+          break;
+        case 'done':
+          assistantBufferRef.current = event.reply;
+          updateAssistantMessage(assistantBufferRef.current);
+          if (event.metrics) {
+            setLatestMetrics(event.metrics);
+          }
+          setIsSubmitting(false);
+          assistantIndexRef.current = null;
+          refreshMetricsSummary();
+          break;
+        case 'error':
+          updateAssistantMessage(`Error: ${event.message}`);
+          setIsSubmitting(false);
+          assistantIndexRef.current = null;
+          break;
+        default:
+          break;
+      }
+    };
 
     try {
-      const response = await sendChatMessage({
-        prompt: userMessage.content,
-        history: messages.map((m) => ({ role: m.role, content: m.content })),
-        notebook_id: notebookId,
-      });
-
-      const assistantMessage: ChatMessage = { role: 'assistant', content: response.reply };
-      setMessages((prev) => [...prev, assistantMessage]);
-    } catch (error) {
-      console.error(error);
-      const errorMessage: ChatMessage = {
-        role: 'assistant',
-        content: `Error: ${error instanceof Error ? error.message : 'Failed to get response'}`,
-      };
-      setMessages((prev) => [...prev, errorMessage]);
-    } finally {
-      setIsSubmitting(false);
+      await streamChatMessage(body, handleStreamEvent);
+    } catch (streamError) {
+      console.error('Streaming failed, falling back to standard request', streamError);
+      try {
+        const response = await sendChatMessage(body);
+        assistantBufferRef.current = response.reply;
+        updateAssistantMessage(response.reply);
+        setLatestMetrics(response.metrics ?? null);
+      } catch (error) {
+        console.error(error);
+        updateAssistantMessage(`Error: ${error instanceof Error ? error.message : 'Failed to get response'}`);
+        setLatestMetrics(null);
+      } finally {
+        setIsSubmitting(false);
+        assistantIndexRef.current = null;
+        refreshMetricsSummary();
+      }
     }
   };
 
@@ -122,6 +234,64 @@ function App() {
       setDocuments([]);
     }
   }, [notebookId]);
+
+  const handleExportConversation = async () => {
+    try {
+      await exportConversation('Offline Notebook LM Conversation', messages);
+    } catch (error) {
+      console.error('Export failed', error);
+    }
+  };
+
+  const handleDownloadNotebook = async () => {
+    if (!notebookId) return;
+    try {
+      await downloadNotebookSummaries(notebookId);
+    } catch (error) {
+      console.error('Notebook export failed', error);
+    }
+  };
+
+  const handleAudioUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setSpeechStatus('Transcribing audio...');
+    try {
+      const transcript = await transcribeAudio(file);
+      setInput((prev) => (prev ? `${prev}\n${transcript}` : transcript));
+      setSpeechStatus('Transcript added to composer.');
+    } catch (error) {
+      setSpeechStatus(error instanceof Error ? error.message : 'Transcription failed');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const handleSpeakLast = async () => {
+    const lastAssistant = [...messages].reverse().find((msg) => msg.role === 'assistant');
+    if (!lastAssistant) return;
+    setSpeechStatus('Generating audio...');
+    try {
+      const url = await speakText(lastAssistant.content);
+      setTtsAudioUrl(url);
+      setSpeechStatus('Playing audio');
+    } catch (error) {
+      setSpeechStatus(error instanceof Error ? error.message : 'TTS failed');
+    }
+  };
+
+  const handleAgentPlan = async () => {
+    if (!planGoal.trim()) return;
+    setIsPlanning(true);
+    try {
+      const response = await requestAgentPlan(planGoal.trim(), notebookId);
+      setAgentPlan(response.plan);
+    } catch (error) {
+      setAgentPlan(error instanceof Error ? error.message : 'Failed to create plan');
+    } finally {
+      setIsPlanning(false);
+    }
+  };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -231,15 +401,17 @@ function App() {
             {messages.map((msg, idx) => (
               <div key={idx} className={`message message-${msg.role}`}>
                 <div className="message-role">{msg.role === 'user' ? 'You' : 'Assistant'}</div>
-                <ReactMarkdown className="message-content markdown">{msg.content}</ReactMarkdown>
+                {msg.content ? (
+                  <ReactMarkdown className="message-content markdown">{msg.content}</ReactMarkdown>
+                ) : (
+                  <div className="message-content thinking-bubble">
+                    <span className="thinking-text" data-text="thinking…">
+                      thinking…
+                    </span>
+                  </div>
+                )}
               </div>
             ))}
-            {isSubmitting && (
-              <div className="message message-assistant">
-                <div className="message-role">Assistant</div>
-                <div className="message-content">Thinking...</div>
-              </div>
-            )}
             <div ref={messagesEndRef} />
           </div>
 
@@ -341,12 +513,31 @@ function App() {
                 </div>
                 <div>
                   <dt>Model</dt>
-                  <dd>{config.ollama_model}</dd>
+                  <dd>
+                    {config.resolved_ollama_model ?? config.ollama_model}
+                    {config.model_selection_reason && (
+                      <span className="config-hint"> ({config.model_selection_reason})</span>
+                    )}
+                  </dd>
                 </div>
                 <div>
                   <dt>Base URL</dt>
                   <dd>{config.ollama_base_url}</dd>
                 </div>
+                <div>
+                  <dt>LangChain Splitter</dt>
+                  <dd>{config.use_langchain_splitter ? 'enabled' : 'disabled'}</dd>
+                </div>
+                <div>
+                  <dt>LlamaIndex RAG</dt>
+                  <dd>{config.use_llamaindex_rag ? 'enabled' : 'disabled'}</dd>
+                </div>
+                {config.embedding_model && (
+                  <div>
+                    <dt>Embedding Model</dt>
+                    <dd>{config.embedding_model}</dd>
+                  </div>
+                )}
               </dl>
             ) : (
               <p>Loading...</p>
@@ -359,7 +550,116 @@ function App() {
             {status === 'error' && (
               <p className="error-hint">Make sure the backend is running on http://127.0.0.1:8000</p>
             )}
+            {latestMetrics && (
+              <div className="metrics-list">
+                {Object.entries(latestMetrics).map(([key, value]) => (
+                  <div key={key} className="metric-row">
+                    <span className="metric-key">{key}</span>
+                    <span className="metric-value">{value.toFixed(1)} ms</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {streamSources.length > 0 && (
+              <div className="sources-list">
+                <div className="sources-title">Sources</div>
+                {streamSources.map((src, idx) => (
+                  <div key={`${src.source_path}-${idx}`} className="source-row">
+                    <div className="source-path" title={src.source_path}>
+                      {src.source_path.split(/[/\\]/).pop() ?? src.source_path}
+                    </div>
+                    <div className="source-preview">{src.preview}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
+
+          {metricsSummary && (
+            <div className="card">
+              <h2>Analytics</h2>
+              <div className="metrics-list">
+                <div className="metric-row">
+                  <span className="metric-key">Sessions</span>
+                  <span className="metric-value">{metricsSummary.conversations}</span>
+                </div>
+                <div className="metric-row">
+                  <span className="metric-key">Avg Total</span>
+                  <span className="metric-value">
+                    {metricsSummary.avg_total_ms ? metricsSummary.avg_total_ms.toFixed(1) : '--'} ms
+                  </span>
+                </div>
+                <div className="metric-row">
+                  <span className="metric-key">Avg Retrieval</span>
+                  <span className="metric-value">
+                    {metricsSummary.avg_retrieval_ms ? metricsSummary.avg_retrieval_ms.toFixed(1) : '--'} ms
+                  </span>
+                </div>
+                <div className="metric-row">
+                  <span className="metric-key">Avg LLM</span>
+                  <span className="metric-value">
+                    {metricsSummary.avg_llm_ms ? metricsSummary.avg_llm_ms.toFixed(1) : '--'} ms
+                  </span>
+                </div>
+              </div>
+              <div className="provider-list">
+                {Object.entries(metricsSummary.provider_breakdown).map(([provider, count]) => (
+                  <div key={provider} className="provider-row">
+                    <span>{provider}</span>
+                    <span>{count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="card">
+            <h2>Conversation Tools</h2>
+            <button type="button" className="secondary-button" onClick={handleExportConversation} disabled={messages.length === 0}>
+              Export Conversation
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={handleDownloadNotebook}
+              disabled={!notebookId}
+            >
+              Download Notebook Summaries
+            </button>
+          </div>
+
+          <div className="card">
+            <h2>Agent Workspace</h2>
+            <textarea
+              value={planGoal}
+              onChange={(e) => setPlanGoal(e.target.value)}
+              placeholder="Goal (e.g., Summarize chapter 3)"
+              rows={3}
+            />
+            <button type="button" className="secondary-button" onClick={handleAgentPlan} disabled={isPlanning || !planGoal.trim()}>
+              {isPlanning ? 'Planning...' : 'Generate Plan'}
+            </button>
+            {agentPlan && <pre className="agent-plan">{agentPlan}</pre>}
+          </div>
+
+          {(config?.enable_speech_stt || config?.enable_speech_tts) && (
+            <div className="card">
+              <h2>Speech</h2>
+              {config?.enable_speech_stt && (
+                <>
+                  <p className="upload-hint">Drop an audio clip to transcribe it into the composer.</p>
+                  <input type="file" accept="audio/*" onChange={handleAudioUpload} />
+                </>
+              )}
+              {config?.enable_speech_tts && (
+                <button type="button" className="secondary-button" onClick={handleSpeakLast} disabled={!messages.some((m) => m.role === 'assistant')}>
+                  Speak Last Answer
+                </button>
+              )}
+              {speechStatus && <p className="upload-status">{speechStatus}</p>}
+              {ttsAudioUrl && <audio src={ttsAudioUrl} controls autoPlay />}
+            </div>
+          )}
         </aside>
       </main>
 

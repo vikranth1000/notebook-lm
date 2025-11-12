@@ -86,9 +86,11 @@ def _load_pdf(file_path: Path) -> LoadedDocument:
         text_parts = []
         
         for page in reader.pages:
-            text_parts.append(page.extract_text())
+            page_text = page.extract_text()
+            if page_text:
+                text_parts.append(page_text)
         
-        text = "\n\n".join(text_parts)
+        text = "\n\n".join(part for part in text_parts if part)
         return LoadedDocument(path=file_path, text=text)
     except ImportError:
         raise DocumentLoaderError("pypdf is required for PDF support")
@@ -137,4 +139,3 @@ def _load_pptx(file_path: Path) -> LoadedDocument:
         raise DocumentLoaderError("python-pptx is required for PPTX support")
     except Exception as e:
         raise DocumentLoaderError(f"Failed to read PPTX {file_path}: {e}")
-

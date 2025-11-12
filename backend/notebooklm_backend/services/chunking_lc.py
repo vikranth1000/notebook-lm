@@ -11,7 +11,12 @@ except Exception as e:  # pragma: no cover - handled at runtime
 from .chunking import TextChunk  # reuse our TextChunk dataclass
 
 
-def lc_split_text_to_chunks(text: str, source_path: str, chunk_size: int = 800, chunk_overlap: int = 120) -> Iterable[TextChunk]:
+def lc_split_text_to_chunks(
+    text: str,
+    source_path: str,
+    chunk_size: int = 800,
+    chunk_overlap: int = 120,
+) -> Iterable[TextChunk]:
     """
     Split text using LangChain's RecursiveCharacterTextSplitter and map to our TextChunk type.
     Falls back by raising if LC is not available; the caller should decide the alternative.
@@ -35,5 +40,4 @@ def lc_split_text_to_chunks(text: str, source_path: str, chunk_size: int = 800, 
         chunk_id = md5(f"{source_path}:{order}:{content[:100]}".encode()).hexdigest()
         yield TextChunk(chunk_id=chunk_id, text=content, source_path=source_path, order=order)
         order += 1
-
 
