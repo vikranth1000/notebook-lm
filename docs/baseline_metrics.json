@@ -1,0 +1,75 @@
+{
+  "system_info": {
+    "embedding_backend": "sentence-transformers",
+    "embedding_model": "all-MiniLM-L6-v2",
+    "llm_provider": "ollama",
+    "ollama_model": "qwen2.5:3b",
+    "use_langchain_splitter": true,
+    "use_llamaindex_rag": true,
+    "llm_max_tokens": 2048,
+    "llm_context_window": 2048
+  },
+  "embedding": {
+    "Small batch": {
+      "batch_size": 10,
+      "total_time": 0.0323331356048584,
+      "time_per_text": 0.00323331356048584,
+      "texts_per_second": 309.28024186115107,
+      "embedding_dim": 384
+    },
+    "Medium batch": {
+      "batch_size": 50,
+      "total_time": 0.06983590126037598,
+      "time_per_text": 0.0013967180252075196,
+      "texts_per_second": 715.9641258667249,
+      "embedding_dim": 384
+    },
+    "Large batch": {
+      "batch_size": 100,
+      "total_time": 0.09890627861022949,
+      "time_per_text": 0.000989062786102295,
+      "texts_per_second": 1011.0581593518511,
+      "embedding_dim": 384
+    }
+  },
+  "chunking": {
+    "Small document (1K chars)": {
+      "doc_size": 1000,
+      "chunks_count": 3,
+      "chunking_time": 0.00015783309936523438,
+      "time_per_chunk": 5.261103312174479e-05,
+      "chars_per_second": 6335806.64652568
+    },
+    "Medium document (5K chars)": {
+      "doc_size": 5000,
+      "chunks_count": 14,
+      "chunking_time": 2.7179718017578125e-05,
+      "time_per_chunk": 1.941408429827009e-06,
+      "chars_per_second": 183960701.75438598
+    },
+    "Large document (20K chars)": {
+      "doc_size": 20000,
+      "chunks_count": 54,
+      "chunking_time": 9.131431579589844e-05,
+      "time_per_chunk": 1.6910058480721933e-06,
+      "chars_per_second": 219023707.57180157
+    }
+  },
+  "ingestion": {
+    "document_size": 15900,
+    "chunks_count": 42,
+    "chunking_time": 8.392333984375e-05,
+    "embedding_time": 0.14637112617492676,
+    "storage_time": 0.1457841396331787,
+    "total_time": 0.2922401428222656,
+    "chunks_per_second": 286.9418381724152
+  },
+  "multi_document": {
+    "total_chunks": 42,
+    "unique_documents": 1,
+    "documents": {
+      "test_document.txt": 42
+    },
+    "chunks_per_document_avg": 42.0
+  }
+}

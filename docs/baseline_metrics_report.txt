@@ -1,0 +1,63 @@
+================================================================================
+BASELINE PERFORMANCE MEASUREMENT REPORT - v1.0
+================================================================================
+
+Generated: 2025-11-11 20:25:48
+
+SYSTEM CONFIGURATION
+--------------------------------------------------------------------------------
+  embedding_backend: sentence-transformers
+  embedding_model: all-MiniLM-L6-v2
+  llm_provider: ollama
+  ollama_model: qwen2.5:3b
+  use_langchain_splitter: True
+  use_llamaindex_rag: True
+  llm_max_tokens: 2048
+  llm_context_window: 2048
+
+EMBEDDING PERFORMANCE
+--------------------------------------------------------------------------------
+  Small batch:
+    Batch size: 10
+    Texts per second: 309.3
+    Time per text: 3.23ms
+  Medium batch:
+    Batch size: 50
+    Texts per second: 716.0
+    Time per text: 1.40ms
+  Large batch:
+    Batch size: 100
+    Texts per second: 1011.1
+    Time per text: 0.99ms
+
+CHUNKING PERFORMANCE
+--------------------------------------------------------------------------------
+  Small document (1K chars):
+    Chunks generated: 3
+    Chunking time: 0.000s
+    Chars per second: 6335807
+  Medium document (5K chars):
+    Chunks generated: 14
+    Chunking time: 0.000s
+    Chars per second: 183960702
+  Large document (20K chars):
+    Chunks generated: 54
+    Chunking time: 0.000s
+    Chars per second: 219023708
+
+INGESTION PIPELINE PERFORMANCE
+--------------------------------------------------------------------------------
+  Document size: 15900 characters
+  Chunks generated: 42
+  Total time: 0.292s
+    - Chunking: 0.000s
+    - Embedding: 0.146s (286.9 chunks/sec)
+    - Storage: 0.146s
+
+MULTI-DOCUMENT STATISTICS
+--------------------------------------------------------------------------------
+  Total chunks: 42
+  Unique documents: 1
+  Average chunks per document: 42.0
+
+================================================================================
