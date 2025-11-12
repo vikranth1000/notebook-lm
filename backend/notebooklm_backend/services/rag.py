@@ -34,16 +34,62 @@ class RAGService:
         return self._llm
 
     async def query(self, notebook_id: str, question: str, top_k: int = 5) -> RAGResponse:
-        # Unified RAG query - works for all document types and question types
-        # Retrieve significantly more chunks to ensure we get content from all documents
-        # This helps when multiple documents are in the same notebook
-        top_k = max(top_k, 20)
+        """
+        Two-stage RAG query:
+        1. Stage 1 (Coarse): Filter documents by summary similarity
+        2. Stage 2 (Fine): Retrieve chunks only from relevant documents
+        """
+        # Stage 1: Query document summaries to find relevant documents
+        relevant_summaries = self.vector_store.query_document_summaries(
+            notebook_id=notebook_id,
+            query=question,
+            top_k=3,  # Get top 3 most relevant documents
+        )
         
-        query_results = self.vector_store.query(notebook_id=notebook_id, query=question, top_k=top_k)
-
-        documents = query_results.get("documents", [[]])[0]
-        metadatas = query_results.get("metadatas", [[]])[0]
-        distances = query_results.get("distances", [[]])[0] if query_results.get("distances") else []
+        # If we have summaries, use two-stage retrieval
+        if relevant_summaries:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Two-stage retrieval: Found {len(relevant_summaries)} relevant documents")
+            
+            # Stage 2: Query chunks only from relevant documents
+            # We'll filter by source_path in the query results
+            query_results = self.vector_store.query(notebook_id=notebook_id, query=question, top_k=top_k * 2)
+            
+            # Filter to only include chunks from relevant documents
+            relevant_source_paths = {s.source_path for s in relevant_summaries}
+            documents = query_results.get("documents", [[]])[0]
+            metadatas = query_results.get("metadatas", [[]])[0]
+            distances = query_results.get("distances", [[]])[0] if query_results.get("distances") else []
+            
+            # Filter chunks by source
+            filtered_docs = []
+            filtered_metas = []
+            filtered_dists = []
+            
+            for doc, meta, dist in zip(documents, metadatas, distances):
+                source_path = meta.get("source_path", "unknown") if isinstance(meta, dict) else "unknown"
+                if source_path in relevant_source_paths:
+                    filtered_docs.append(doc)
+                    filtered_metas.append(meta)
+                    filtered_dists.append(dist)
+            
+            # If filtering removed too many chunks, fall back to original results
+            if len(filtered_docs) < top_k // 2:
+                logger.warning(f"Filtered too many chunks ({len(filtered_docs)}), using original results")
+                documents = query_results.get("documents", [[]])[0]
+                metadatas = query_results.get("metadatas", [[]])[0]
+                distances = query_results.get("distances", [[]])[0] if query_results.get("distances") else []
+            else:
+                documents = filtered_docs[:top_k]
+                metadatas = filtered_metas[:top_k]
+                distances = filtered_dists[:top_k]
+        else:
+            # Fallback to single-stage if no summaries available
+            query_results = self.vector_store.query(notebook_id=notebook_id, query=question, top_k=max(top_k, 20))
+            documents = query_results.get("documents", [[]])[0]
+            metadatas = query_results.get("metadatas", [[]])[0]
+            distances = query_results.get("distances", [[]])[0] if query_results.get("distances") else []
 
         if not documents:
             return RAGResponse(

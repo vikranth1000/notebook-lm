@@ -57,7 +57,7 @@ async def ingest_document(
         raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
     
     try:
-        result: IngestionResult = ingestion_service.ingest_path(
+        result: IngestionResult = await ingestion_service.ingest_path(
             notebook_id=notebook_id,
             path=file_path,
             recursive=False,

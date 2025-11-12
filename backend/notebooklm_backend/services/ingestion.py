@@ -8,6 +8,7 @@ from ..config import AppConfig
 from .chunking import TextChunk, chunk_text
 from .chunking_lc import lc_split_text_to_chunks
 from .document_loader import LoadedDocument, DocumentLoaderError, iter_supported_files, load_document
+from .document_summary import DocumentSummaryService
 from .vector_store import VectorStoreManager
 
 
@@ -22,8 +23,9 @@ class IngestionService:
     def __init__(self, settings: AppConfig, vector_store: VectorStoreManager) -> None:
         self.settings = settings
         self.vector_store = vector_store
+        self.summary_service = DocumentSummaryService(settings)
 
-    def ingest_path(
+    async def ingest_path(
         self,
         notebook_id: str,
         path: Path,
@@ -41,8 +43,20 @@ class IngestionService:
 
         for file_path in files:
             document = load_document(file_path)
-            chunks = self._chunk_document(document)
+            chunks = list(self._chunk_document(document))
             all_chunks.extend(chunks)
+            
+            # Generate document summary for two-stage retrieval
+            relative_path = str(document.path)
+            summary = await self.summary_service.generate_summary(
+                text=document.text,
+                source_path=relative_path,
+            )
+            summary.chunk_count = len(chunks)
+            
+            # Store summary in vector store
+            self.vector_store.store_document_summary(notebook_id=notebook_id, summary=summary)
+            
             documents_processed += 1
 
         chunk_count = self.vector_store.add_chunks(notebook_id=notebook_id, chunks=all_chunks)

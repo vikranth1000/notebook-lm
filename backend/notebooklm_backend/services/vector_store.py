@@ -9,6 +9,7 @@ from chromadb import Collection
 from ..config import AppConfig
 from .chunking import TextChunk
 from .embeddings import EmbeddingBackend
+from .document_summary import DocumentSummary
 
 
 @dataclass
@@ -60,6 +61,96 @@ class VectorStoreManager:
         collection = self.get_collection(notebook_id)
         query_emb = self.embedding_backend.embed([query])
         return collection.query(query_embeddings=query_emb, n_results=top_k)
+    
+    def _doc_summaries_collection_name(self, notebook_id: str) -> str:
+        """Get the name of the document summaries collection."""
+        return f"notebook_{notebook_id}_summaries"
+    
+    def store_document_summary(self, notebook_id: str, summary: DocumentSummary) -> None:
+        """
+        Store a document summary in a separate collection for fast document-level filtering.
+        """
+        summaries_collection = self.client.get_or_create_collection(
+            name=self._doc_summaries_collection_name(notebook_id)
+        )
+        
+        # Embed the summary for similarity search
+        summary_embedding = self.embedding_backend.embed([summary.summary])
+        
+        # Store summary with metadata
+        summaries_collection.add(
+            ids=[summary.source_path],  # Use source_path as ID for easy lookup
+            documents=[summary.summary],
+            metadatas=[{
+                "source_path": summary.source_path,
+                "chunk_count": summary.chunk_count,
+                "document_type": summary.document_type or "unknown",
+            }],
+            embeddings=summary_embedding,
+        )
+    
+    def query_document_summaries(
+        self,
+        notebook_id: str,
+        query: str,
+        top_k: int = 3,
+    ) -> list[DocumentSummary]:
+        """
+        Query document summaries to find relevant documents (Stage 1: Coarse filtering).
+        Returns summaries of documents that match the query.
+        """
+        try:
+            summaries_collection = self.client.get_collection(
+                name=self._doc_summaries_collection_name(notebook_id)
+            )
+        except Exception:
+            # No summaries collection yet, return empty
+            return []
+        
+        # Embed query and search summaries
+        query_emb = self.embedding_backend.embed([query])
+        results = summaries_collection.query(query_embeddings=query_emb, n_results=top_k)
+        
+        # Convert to DocumentSummary objects
+        summaries = []
+        documents = results.get("documents", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0]
+        
+        for doc, meta in zip(documents, metadatas):
+            if isinstance(meta, dict):
+                summaries.append(DocumentSummary(
+                    source_path=meta.get("source_path", "unknown"),
+                    summary=doc,
+                    chunk_count=meta.get("chunk_count", 0),
+                    document_type=meta.get("document_type"),
+                ))
+        
+        return summaries
+    
+    def get_all_document_summaries(self, notebook_id: str) -> list[DocumentSummary]:
+        """Get all document summaries for a notebook."""
+        try:
+            summaries_collection = self.client.get_collection(
+                name=self._doc_summaries_collection_name(notebook_id)
+            )
+        except Exception:
+            return []
+        
+        all_docs = summaries_collection.get(include=["documents", "metadatas"])
+        documents = all_docs.get("documents", [])
+        metadatas = all_docs.get("metadatas", [])
+        
+        summaries = []
+        for doc, meta in zip(documents, metadatas):
+            if isinstance(meta, dict):
+                summaries.append(DocumentSummary(
+                    source_path=meta.get("source_path", "unknown"),
+                    summary=doc,
+                    chunk_count=meta.get("chunk_count", 0),
+                    document_type=meta.get("document_type"),
+                ))
+        
+        return summaries
 
 
 def create_vector_store(settings: AppConfig, embedding_backend: EmbeddingBackend) -> VectorStoreManager:
