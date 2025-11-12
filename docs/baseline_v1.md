@@ -196,12 +196,16 @@
   - Storage: 0.146s
 - **Throughput:** ~146 chunks/second (end-to-end)
 
-#### Query Performance
-- **Status:** Requires Ollama to be running
-- **Note:** Query performance depends on:
-  - Collection size (number of chunks)
-  - LLM response time (varies with model and response length)
-  - Network latency (if Ollama is remote)
+#### Query Performance (Measured with Ollama)
+- **Collection Size:** 42 chunks (test document)
+- **Average Query Time:** 10.763s
+- **Average Search Time:** 10.549s (includes LLM generation)
+- **Query Breakdown:**
+  - General question: 13.557s (20 sources retrieved)
+  - Summary request: 9.406s (20 sources retrieved)
+  - Information extraction: 9.325s (20 sources retrieved)
+- **Note:** Most time is spent in LLM generation, not vector search
+- **Vector Search Time:** <0.1s (very fast, embedded in search_time)
 
 #### Resource Usage
 - **Memory:** 
@@ -211,27 +215,28 @@
 - **CPU:** Moderate during embedding, high during LLM inference
 - **Disk:** ChromaDB indexes stored in `~/NotebookLM/indexes/`
 
-### Test Scenarios (To Be Measured)
+### Test Scenarios (Measured)
 
-#### Scenario 1: Single Document (Small)
-- **Document:** Resume (8 chunks)
+#### Scenario 1: Single Document (Test)
+- **Document:** Test document (42 chunks)
 - **Query:** "What does this document contain?"
-- **Expected:** Fast retrieval, accurate answer
+- **Result:** 13.557s total time, 20 sources retrieved
+- **Analysis:** LLM generation dominates time (~13s), vector search is fast (<0.1s)
 
-#### Scenario 2: Single Document (Large)
+#### Scenario 2: Single Document (Large) - To Be Measured
 - **Document:** Research paper (135 chunks)
 - **Query:** "Summarize the main findings"
-- **Expected:** Slower retrieval, comprehensive answer
+- **Expected:** Similar LLM time, more chunks retrieved
 
-#### Scenario 3: Multi-Document (Mixed Sizes)
+#### Scenario 3: Multi-Document (Mixed Sizes) - To Be Measured
 - **Documents:** Research paper (135 chunks) + Resume (8 chunks)
 - **Query:** "What does the resume contain?"
-- **Expected:** Should retrieve from resume, may need per-doc retrieval
+- **Expected:** May need per-doc retrieval, similar LLM time
 
-#### Scenario 4: Multi-Document (Many Documents)
+#### Scenario 4: Multi-Document (Many Documents) - To Be Measured
 - **Documents:** 5+ documents with varying chunk counts
 - **Query:** General question
-- **Expected:** Retrieves from multiple docs, may be slow
+- **Expected:** Retrieves from multiple docs, LLM time may increase with more context
 
 ---
 

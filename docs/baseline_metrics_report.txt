@@ -2,7 +2,7 @@
 BASELINE PERFORMANCE MEASUREMENT REPORT - v1.0
 ================================================================================
 
-Generated: 2025-11-11 20:25:48
+Generated: 2025-11-11 20:29:15
 
 SYSTEM CONFIGURATION
 --------------------------------------------------------------------------------
@@ -19,40 +19,52 @@ EMBEDDING PERFORMANCE
 --------------------------------------------------------------------------------
   Small batch:
     Batch size: 10
-    Texts per second: 309.3
-    Time per text: 3.23ms
+    Texts per second: 301.5
+    Time per text: 3.32ms
   Medium batch:
     Batch size: 50
-    Texts per second: 716.0
-    Time per text: 1.40ms
+    Texts per second: 884.3
+    Time per text: 1.13ms
   Large batch:
     Batch size: 100
-    Texts per second: 1011.1
-    Time per text: 0.99ms
+    Texts per second: 1586.9
+    Time per text: 0.63ms
 
 CHUNKING PERFORMANCE
 --------------------------------------------------------------------------------
   Small document (1K chars):
     Chunks generated: 3
     Chunking time: 0.000s
-    Chars per second: 6335807
+    Chars per second: 7695971
   Medium document (5K chars):
     Chunks generated: 14
     Chunking time: 0.000s
-    Chars per second: 183960702
+    Chars per second: 199728762
   Large document (20K chars):
     Chunks generated: 54
     Chunking time: 0.000s
-    Chars per second: 219023708
+    Chars per second: 232371413
 
 INGESTION PIPELINE PERFORMANCE
 --------------------------------------------------------------------------------
   Document size: 15900 characters
   Chunks generated: 42
-  Total time: 0.292s
+  Total time: 0.254s
     - Chunking: 0.000s
-    - Embedding: 0.146s (286.9 chunks/sec)
-    - Storage: 0.146s
+    - Embedding: 0.115s (366.4 chunks/sec)
+    - Storage: 0.139s
+
+QUERY PERFORMANCE
+--------------------------------------------------------------------------------
+  Collection size: 42 chunks
+  Queries tested: 3
+  Average query time: 10.763s
+  Average search time: 10.549s
+
+  Query Details:
+    - General question: 13.557s (20 sources)
+    - Summary request: 9.406s (20 sources)
+    - Information extraction: 9.325s (20 sources)
 
 MULTI-DOCUMENT STATISTICS
 --------------------------------------------------------------------------------

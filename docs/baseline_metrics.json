@@ -12,23 +12,23 @@
   "embedding": {
     "Small batch": {
       "batch_size": 10,
-      "total_time": 0.0323331356048584,
-      "time_per_text": 0.00323331356048584,
-      "texts_per_second": 309.28024186115107,
+      "total_time": 0.03316998481750488,
+      "time_per_text": 0.0033169984817504883,
+      "texts_per_second": 301.477376460018,
       "embedding_dim": 384
     },
     "Medium batch": {
       "batch_size": 50,
-      "total_time": 0.06983590126037598,
-      "time_per_text": 0.0013967180252075196,
-      "texts_per_second": 715.9641258667249,
+      "total_time": 0.056539058685302734,
+      "time_per_text": 0.0011307811737060547,
+      "texts_per_second": 884.3444012448238,
       "embedding_dim": 384
     },
     "Large batch": {
       "batch_size": 100,
-      "total_time": 0.09890627861022949,
-      "time_per_text": 0.000989062786102295,
-      "texts_per_second": 1011.0581593518511,
+      "total_time": 0.0630178451538086,
+      "time_per_text": 0.0006301784515380859,
+      "texts_per_second": 1586.852101272719,
       "embedding_dim": 384
     }
   },
@@ -36,33 +36,68 @@
     "Small document (1K chars)": {
       "doc_size": 1000,
       "chunks_count": 3,
-      "chunking_time": 0.00015783309936523438,
-      "time_per_chunk": 5.261103312174479e-05,
-      "chars_per_second": 6335806.64652568
+      "chunking_time": 0.00012993812561035156,
+      "time_per_chunk": 4.331270853678385e-05,
+      "chars_per_second": 7695970.642201835
     },
     "Medium document (5K chars)": {
       "doc_size": 5000,
       "chunks_count": 14,
-      "chunking_time": 2.7179718017578125e-05,
-      "time_per_chunk": 1.941408429827009e-06,
-      "chars_per_second": 183960701.75438598
+      "chunking_time": 2.5033950805664062e-05,
+      "time_per_chunk": 1.7881393432617188e-06,
+      "chars_per_second": 199728761.9047619
     },
     "Large document (20K chars)": {
       "doc_size": 20000,
       "chunks_count": 54,
-      "chunking_time": 9.131431579589844e-05,
-      "time_per_chunk": 1.6910058480721933e-06,
-      "chars_per_second": 219023707.57180157
+      "chunking_time": 8.606910705566406e-05,
+      "time_per_chunk": 1.5938723528826678e-06,
+      "chars_per_second": 232371412.74238226
     }
   },
   "ingestion": {
     "document_size": 15900,
     "chunks_count": 42,
-    "chunking_time": 8.392333984375e-05,
-    "embedding_time": 0.14637112617492676,
-    "storage_time": 0.1457841396331787,
-    "total_time": 0.2922401428222656,
-    "chunks_per_second": 286.9418381724152
+    "chunking_time": 9.489059448242188e-05,
+    "embedding_time": 0.11463499069213867,
+    "storage_time": 0.13891196250915527,
+    "total_time": 0.2536430358886719,
+    "chunks_per_second": 366.3802801083163
+  },
+  "queries": {
+    "collection_size": 42,
+    "queries_tested": 3,
+    "average_query_time": 10.762606779734293,
+    "average_search_time": 10.549145539601644,
+    "query_details": [
+      {
+        "query": "What does this document contain?",
+        "query_type": "General question",
+        "query_embed_time": 0.04771900177001953,
+        "search_time": 13.508944272994995,
+        "total_time": 13.556664943695068,
+        "answer_length": 817,
+        "sources_count": 20
+      },
+      {
+        "query": "Summarize the main points",
+        "query_type": "Summary request",
+        "query_embed_time": 0.41008996963500977,
+        "search_time": 8.996331214904785,
+        "total_time": 9.406422138214111,
+        "answer_length": 633,
+        "sources_count": 20
+      },
+      {
+        "query": "What is the key information?",
+        "query_type": "Information extraction",
+        "query_embed_time": 0.1825709342956543,
+        "search_time": 9.142161130905151,
+        "total_time": 9.324733257293701,
+        "answer_length": 742,
+        "sources_count": 20
+      }
+    ]
   },
   "multi_document": {
     "total_chunks": 42,
