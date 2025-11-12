@@ -110,6 +110,24 @@ class LlamaIndexRAGService:
                 request_timeout=120.0,
             )
 
+            # Two-stage retrieval: First filter documents by summary, then retrieve chunks
+            # Stage 1: Query document summaries to find relevant documents
+            relevant_summaries = self.vector_store.query_document_summaries(
+                notebook_id=notebook_id,
+                query=question,
+                top_k=3,  # Get top 3 most relevant documents
+            )
+            
+            # Determine which documents to search
+            if relevant_summaries:
+                logger.info(f"Two-stage retrieval: Found {len(relevant_summaries)} relevant documents")
+                relevant_source_paths = {s.source_path for s in relevant_summaries}
+                # We'll filter chunks by source_path after retrieval
+                use_two_stage = True
+            else:
+                logger.info("No document summaries found, using single-stage retrieval")
+                use_two_stage = False
+            
             # For multi-document scenarios, we need to ensure we retrieve chunks from ALL documents
             # First, get all unique documents in the collection
             all_docs = collection.get(include=["metadatas"])
@@ -155,10 +173,37 @@ class LlamaIndexRAGService:
             
             logger.info(f"Found content from {len(source_groups)} different documents: {list(source_groups.keys())}")
             
+            # If using two-stage retrieval, filter to only relevant documents
+            if use_two_stage:
+                # Map source_paths to source_names for filtering
+                source_path_to_name = {}
+                for meta in all_metadatas:
+                    if isinstance(meta, dict):
+                        source_path = meta.get("source_path", "unknown")
+                        source_name = Path(source_path).name if source_path != "unknown" else "Document"
+                        source_path_to_name[source_path] = source_name
+                
+                # Filter source_groups to only include relevant documents
+                filtered_source_groups = defaultdict(list)
+                for summary in relevant_summaries:
+                    summary_source_name = Path(summary.source_path).name if summary.source_path != "unknown" else "Document"
+                    if summary_source_name in source_groups:
+                        filtered_source_groups[summary_source_name] = source_groups[summary_source_name]
+                
+                if filtered_source_groups:
+                    logger.info(f"Two-stage filtering: Keeping {len(filtered_source_groups)} relevant documents")
+                    source_groups = filtered_source_groups
+                    # Rebuild retrieved_nodes from filtered groups
+                    retrieved_nodes = []
+                    for nodes in source_groups.values():
+                        retrieved_nodes.extend(nodes)
+                    retrieved_nodes = retrieved_nodes[:retrieval_top_k]  # Limit to top_k
+                    logger.info(f"After filtering: {len(retrieved_nodes)} nodes from {len(source_groups)} documents")
+            
             # If we have multiple documents but retrieval missed some, do per-document retrieval
             # This ensures we get at least some chunks from each document
             missing_docs = set(doc_sources.keys()) - set(source_groups.keys())
-            if len(doc_sources) > 1 and missing_docs:
+            if len(doc_sources) > 1 and missing_docs and not use_two_stage:
                 logger.info(f"Multi-document scenario detected. Missing chunks from: {missing_docs}")
                 logger.info("Performing per-document retrieval to ensure balanced coverage...")
                 
@@ -206,31 +251,36 @@ class LlamaIndexRAGService:
                 if hasattr(self, "_fallback_rag"):
                     return await self._fallback_rag.query(notebook_id, question, top_k)
             
-            # Enhance the question with multi-document awareness
-            # Include ALL documents (not just retrieved ones) so LLM knows what's available
-            all_doc_names = list(doc_sources.keys())
-            enhanced_question = question
-            if len(all_doc_names) > 1:
-                doc_list = ", ".join(all_doc_names)
-                enhanced_question = (
-                    f"Context: The user has uploaded {len(all_doc_names)} documents: {doc_list}. "
-                    f"Pay close attention to which document is most relevant to their question. "
-                    f"If they mention a specific document type (e.g., 'resume', 'research paper', 'the other document', 'the resume'), "
-                    f"you must identify and focus on content from that specific document type.\n\n"
-                    f"User's question: {question}"
+            # Create query engine - use filtered nodes if two-stage retrieval was used
+            if use_two_stage and retrieved_nodes:
+                # Create a custom retriever that uses our filtered nodes
+                from llama_index.core.schema import NodeWithScore
+                from llama_index.core.retrievers import BaseRetriever
+                
+                class FilteredRetriever(BaseRetriever):
+                    def __init__(self, nodes: list):
+                        self.nodes = nodes
+                    
+                    def _retrieve(self, query_bundle):
+                        return self.nodes
+                
+                filtered_retriever = FilteredRetriever(retrieved_nodes)
+                query_engine = index.as_query_engine(
+                    retriever=filtered_retriever,
+                    llm=llm,
+                    response_mode="compact",
                 )
-                logger.info(f"Enhanced question for multi-document scenario with {len(all_doc_names)} documents: {all_doc_names}")
-            
-            # Create query engine - it will use the retrieved nodes (already grouped by source)
-            query_engine = index.as_query_engine(
-                similarity_top_k=retrieval_top_k,
-                llm=llm,
-                response_mode="compact",
-            )
-            
-            logger.info(f"Executing LlamaIndex query with {collection_count} documents in collection...")
-            result = query_engine.query(enhanced_question)
+            else:
+                # Use standard query engine
+                query_engine = index.as_query_engine(
+                    similarity_top_k=retrieval_top_k,
+                    llm=llm,
+                    response_mode="compact",
+                )
 
+            logger.info(f"Executing LlamaIndex query...")
+            result = query_engine.query(question)
+            
             # Extract answer
             answer = str(getattr(result, "response", result))
             logger.info(f"LlamaIndex query completed, answer length: {len(answer)}")
