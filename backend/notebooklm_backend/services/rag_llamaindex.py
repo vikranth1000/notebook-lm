@@ -97,11 +97,8 @@ class LlamaIndexRAGService:
                 embed_model=embedding_model,  # Only for query encoding
             )
             
-            # Verify the index can retrieve documents
-            logger.info(f"Index created, testing retrieval...")
-            test_retriever = index.as_retriever(similarity_top_k=1)
-            test_nodes = test_retriever.retrieve("test")
-            logger.info(f"Test retrieval returned {len(test_nodes)} nodes")
+            # Skip test retrieval - it can cause ChromaDB errors with empty where clauses
+            logger.info(f"Index created successfully")
 
             # Offline LLM via Ollama
             llm = Ollama(
@@ -119,14 +116,29 @@ class LlamaIndexRAGService:
             )
             
             # Determine which documents to search
+            use_two_stage = False
+            relevant_source_paths = set()
             if relevant_summaries:
                 logger.info(f"Two-stage retrieval: Found {len(relevant_summaries)} relevant documents")
-                relevant_source_paths = {s.source_path for s in relevant_summaries}
-                # We'll filter chunks by source_path after retrieval
+                # Normalize source paths for matching
+                for summary in relevant_summaries:
+                    # Try both full path and filename matching
+                    relevant_source_paths.add(summary.source_path)
+                    # Also add filename for matching
+                    from pathlib import Path
+                    relevant_source_paths.add(Path(summary.source_path).name)
                 use_two_stage = True
             else:
                 logger.info("No document summaries found, using single-stage retrieval")
-                use_two_stage = False
+                # Check if summaries collection exists but is empty (old documents)
+                try:
+                    summaries_collection = self.vector_store.client.get_collection(
+                        name=self.vector_store._doc_summaries_collection_name(notebook_id)
+                    )
+                    if summaries_collection.count() == 0:
+                        logger.info("Summaries collection exists but is empty - documents uploaded before summary feature")
+                except Exception:
+                    logger.info("No summaries collection - documents uploaded before summary feature")
             
             # For multi-document scenarios, we need to ensure we retrieve chunks from ALL documents
             # First, get all unique documents in the collection
@@ -171,34 +183,81 @@ class LlamaIndexRAGService:
                 source_name = Path(source_path).name if source_path != "unknown" else "Document"
                 source_groups[source_name].append(node_with_score)
             
-            logger.info(f"Found content from {len(source_groups)} different documents: {list(source_groups.keys())}")
-            
-            # If using two-stage retrieval, filter to only relevant documents
-            if use_two_stage:
-                # Map source_paths to source_names for filtering
-                source_path_to_name = {}
-                for meta in all_metadatas:
-                    if isinstance(meta, dict):
-                        source_path = meta.get("source_path", "unknown")
-                        source_name = Path(source_path).name if source_path != "unknown" else "Document"
-                        source_path_to_name[source_path] = source_name
+            # If no summaries exist, try keyword-based document matching as fallback
+            if not use_two_stage and len(doc_sources) > 1:
+                # Extract keywords from query that might indicate document type
+                question_lower = question.lower()
+                keyword_to_doc_type = {
+                    "resume": ["resume", "cv", "curriculum vitae"],
+                    "research_paper": ["research", "paper", "publication", "arxiv", "study"],
+                }
                 
+                # Find documents that match keywords
+                matching_docs = set()
+                for doc_name in doc_sources.keys():
+                    doc_name_lower = doc_name.lower()
+                    for doc_type, keywords in keyword_to_doc_type.items():
+                        if any(kw in question_lower for kw in keywords) and any(kw in doc_name_lower for kw in keywords):
+                            matching_docs.add(doc_name)
+                            logger.info(f"Keyword match: '{doc_name}' matches query keywords")
+                
+                # If we found matching documents, prioritize them
+                if matching_docs:
+                    logger.info(f"Using keyword-based filtering for {len(matching_docs)} documents: {matching_docs}")
+                    # Filter source_groups to prioritize matching documents
+                    prioritized_groups = defaultdict(list)
+                    other_groups = defaultdict(list)
+                    
+                    for source_name, nodes in source_groups.items():
+                        if source_name in matching_docs:
+                            prioritized_groups[source_name] = nodes
+                        else:
+                            other_groups[source_name] = nodes
+                    
+                    # Rebuild retrieved_nodes with prioritized docs first
+                    retrieved_nodes = []
+                    for nodes in prioritized_groups.values():
+                        retrieved_nodes.extend(nodes)
+                    for nodes in other_groups.values():
+                        retrieved_nodes.extend(nodes)
+                    retrieved_nodes = retrieved_nodes[:retrieval_top_k]
+                    
+                    # Update source_groups for consistency
+                    source_groups = {**prioritized_groups, **other_groups}
+                    logger.info(f"Prioritized {len(prioritized_groups)} documents based on keywords")
                 # Filter source_groups to only include relevant documents
+                # Match by both full path and filename
                 filtered_source_groups = defaultdict(list)
-                for summary in relevant_summaries:
-                    summary_source_name = Path(summary.source_path).name if summary.source_path != "unknown" else "Document"
-                    if summary_source_name in source_groups:
-                        filtered_source_groups[summary_source_name] = source_groups[summary_source_name]
+                for source_name, nodes in source_groups.items():
+                    # Check if this document matches any of the relevant summaries
+                    matches = False
+                    for summary in relevant_summaries:
+                        summary_source_name = Path(summary.source_path).name if summary.source_path != "unknown" else "Document"
+                        # Match by filename
+                        if source_name == summary_source_name:
+                            matches = True
+                            break
+                        # Also check if source_name matches the full path (for absolute paths)
+                        if summary.source_path in source_name or source_name in summary.source_path:
+                            matches = True
+                            break
+                    
+                    if matches:
+                        filtered_source_groups[source_name] = nodes
                 
                 if filtered_source_groups:
-                    logger.info(f"Two-stage filtering: Keeping {len(filtered_source_groups)} relevant documents")
+                    logger.info(f"Two-stage filtering: Keeping {len(filtered_source_groups)} relevant documents: {list(filtered_source_groups.keys())}")
                     source_groups = filtered_source_groups
                     # Rebuild retrieved_nodes from filtered groups
                     retrieved_nodes = []
                     for nodes in source_groups.values():
                         retrieved_nodes.extend(nodes)
-                    retrieved_nodes = retrieved_nodes[:retrieval_top_k]  # Limit to top_k
+                    # Sort by score if available, then limit
+                    retrieved_nodes = retrieved_nodes[:retrieval_top_k]
                     logger.info(f"After filtering: {len(retrieved_nodes)} nodes from {len(source_groups)} documents")
+                else:
+                    logger.warning("Two-stage filtering removed all documents, falling back to original results")
+                    use_two_stage = False
             
             # If we have multiple documents but retrieval missed some, do per-document retrieval
             # This ensures we get at least some chunks from each document
