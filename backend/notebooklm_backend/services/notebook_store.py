@@ -80,7 +80,15 @@ class NotebookStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO notebooks (notebook_id, title, description, source_count, chunk_count, created_at, updated_at)
+                INSERT INTO notebooks (
+                    notebook_id,
+                    title,
+                    description,
+                    source_count,
+                    chunk_count,
+                    created_at,
+                    updated_at
+                )
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(notebook_id) DO UPDATE SET
                     title=excluded.title,

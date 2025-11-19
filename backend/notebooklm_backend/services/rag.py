@@ -90,7 +90,11 @@ class RAGService:
                     docs = res.get("documents", [[]])[0]
                     metas = res.get("metadatas", [[]])[0]
                     dists = res.get("distances", [[]])[0] if res.get("distances") else []
-                    filtered = [(d, m, dists[i] if i < len(dists) else None) for i, (d, m) in enumerate(zip(docs, metas)) if isinstance(m, dict) and m.get("source_path") == spath]
+                    filtered = [
+                        (d, m, dists[i] if i < len(dists) else None)
+                        for i, (d, m) in enumerate(zip(docs, metas))
+                        if isinstance(m, dict) and m.get("source_path") == spath
+                    ]
                     if filtered:
                         docs, metas, dists = zip(*filtered)
                         docs, metas, dists = list(docs), list(metas), list(dists)
@@ -146,7 +150,8 @@ class RAGService:
             "Rules:\n"
             "- Use only the excerpts from the selected documents below. Do not use outside knowledge.\n"
             "- If the question refers to one document (e.g., a resume), ignore all others unless needed to clarify.\n"
-            "- If the answer is not present in the excerpts, reply: 'I could not find this in the provided documents.'\n"
+            "- If the answer is not present in the excerpts, "
+            "reply: 'I could not find this in the provided documents.'\n"
             "- When citing, use [Source #] as shown in the excerpts.\n\n"
             f"Excerpts grouped by document:\n{prompt_context}\n"
             f"Question: {question}\n\n"

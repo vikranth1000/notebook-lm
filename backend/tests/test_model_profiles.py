@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import types
-
 from notebooklm_backend.config import AppConfig
 from notebooklm_backend.services.model_profiles import resolve_ollama_model
 
