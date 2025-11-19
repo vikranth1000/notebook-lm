@@ -150,7 +150,10 @@ class LlamaIndexRAGService:
                         name=self.vector_store._doc_summaries_collection_name(notebook_id)
                     )
                     if summaries_collection.count() == 0:
-                        logger.info("Summaries collection exists but is empty - documents uploaded before summary feature")
+                        logger.info(
+                            "Summaries collection exists but is empty - "
+                            "documents uploaded before summary feature"
+                        )
                 except Exception:
                     logger.info("No summaries collection - documents uploaded before summary feature")
             
