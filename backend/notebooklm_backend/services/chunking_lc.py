@@ -5,7 +5,7 @@ from typing import Iterable
 try:
     # Keep import local to avoid import-time cost if disabled
     from langchain_text_splitters import RecursiveCharacterTextSplitter
-except Exception as e:  # pragma: no cover - handled at runtime
+except Exception:  # pragma: no cover - handled at runtime
     RecursiveCharacterTextSplitter = None  # type: ignore
 
 from .chunking import TextChunk  # reuse our TextChunk dataclass
