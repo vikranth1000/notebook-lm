@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List, TYPE_CHECKING
+from typing import TYPE_CHECKING
 import logging
 
 from ..config import AppConfig
@@ -112,7 +111,7 @@ class LlamaIndexRAGService:
             )
             
             # Skip test retrieval - it can cause ChromaDB errors with empty where clauses
-            logger.info(f"Index created successfully")
+            logger.info("Index created successfully")
 
             # Offline LLM via Ollama
             llm = Ollama(
@@ -150,7 +149,10 @@ class LlamaIndexRAGService:
                         name=self.vector_store._doc_summaries_collection_name(notebook_id)
                     )
                     if summaries_collection.count() == 0:
-                        logger.info("Summaries collection exists but is empty - documents uploaded before summary feature")
+                        logger.info(
+                            "Summaries collection exists but is empty - "
+                            "documents uploaded before summary feature"
+                        )
                 except Exception:
                     logger.info("No summaries collection - documents uploaded before summary feature")
             
@@ -213,7 +215,10 @@ class LlamaIndexRAGService:
                 for doc_name in doc_sources.keys():
                     doc_name_lower = doc_name.lower()
                     for doc_type, keywords in keyword_to_doc_type.items():
-                        if any(kw in question_lower for kw in keywords) and any(kw in doc_name_lower for kw in keywords):
+                        if (
+                            any(kw in question_lower for kw in keywords)
+                            and any(kw in doc_name_lower for kw in keywords)
+                        ):
                             matching_docs.add(doc_name)
                             logger.info(f"Keyword match: '{doc_name}' matches query keywords")
                 
@@ -251,7 +256,11 @@ class LlamaIndexRAGService:
                     # Check if this document matches any of the relevant summaries
                     matches = False
                     for summary in relevant_summaries:
-                        summary_source_name = Path(summary.source_path).name if summary.source_path != "unknown" else "Document"
+                        summary_source_name = (
+                            Path(summary.source_path).name
+                            if summary.source_path != "unknown"
+                            else "Document"
+                        )
                         # Match by filename
                         if source_name == summary_source_name:
                             matches = True
@@ -265,7 +274,11 @@ class LlamaIndexRAGService:
                         filtered_source_groups[source_name] = nodes
                 
                 if filtered_source_groups:
-                    logger.info(f"Two-stage filtering: Keeping {len(filtered_source_groups)} relevant documents: {list(filtered_source_groups.keys())}")
+                    logger.info(
+                        "Two-stage filtering: Keeping %s relevant documents: %s",
+                        len(filtered_source_groups),
+                        list(filtered_source_groups.keys()),
+                    )
                     source_groups = filtered_source_groups
                     # Rebuild retrieved_nodes from filtered groups
                     retrieved_nodes = []
@@ -307,31 +320,49 @@ class LlamaIndexRAGService:
                             node = node_with_score.node if hasattr(node_with_score, "node") else node_with_score
                             meta = getattr(node, "metadata", {}) or {}
                             node_source_path = str(meta.get("source_path", "unknown"))
-                            node_source_name = Path(node_source_path).name if node_source_path != "unknown" else "Document"
-                            
+                            node_source_name = (
+                                Path(node_source_path).name
+                                if node_source_path != "unknown"
+                                else "Document"
+                            )
+
                             if node_source_name == missing_doc_name:
                                 source_groups[missing_doc_name].append(node_with_score)
                                 if len(source_groups[missing_doc_name]) >= chunks_per_doc:
                                     break
                         
-                        logger.info(f"Retrieved {len(source_groups[missing_doc_name])} chunks from {missing_doc_name}")
+                        retrieved_count = len(source_groups[missing_doc_name])
+                        logger.info(
+                            "Retrieved %s chunks from %s",
+                            retrieved_count,
+                            missing_doc_name,
+                        )
                 
                 # Re-log the updated distribution
-                logger.info(f"After per-document retrieval, found content from {len(source_groups)} documents: {list(source_groups.keys())}")
+                logger.info(
+                    "After per-document retrieval, found content from %s documents: %s",
+                    len(source_groups),
+                    list(source_groups.keys()),
+                )
             
             # If we still have missing documents after per-document retrieval, 
             # fall back to custom RAG which handles multi-document scenarios better
             final_missing = set(doc_sources.keys()) - set(source_groups.keys())
             if len(doc_sources) > 1 and final_missing:
-                logger.warning(f"Still missing chunks from documents: {final_missing} after per-document retrieval.")
-                logger.warning(f"This might cause incomplete answers. Falling back to custom RAG for better multi-document handling.")
+                logger.warning(
+                    "Still missing chunks from documents: %s after per-document retrieval.",
+                    final_missing,
+                )
+                logger.warning(
+                    "This might cause incomplete answers. Falling back to custom RAG for "
+                    "better multi-document handling."
+                )
                 if hasattr(self, "_fallback_rag"):
                     return await self._fallback_rag.query(notebook_id, question, top_k)
             
             # Create query engine - use filtered nodes if two-stage retrieval was used
             if use_two_stage and retrieved_nodes:
                 # Create a custom retriever that uses our filtered nodes
-                from llama_index.core.schema import NodeWithScore
                 from llama_index.core.retrievers import BaseRetriever
                 
                 class FilteredRetriever(BaseRetriever):
@@ -355,12 +386,12 @@ class LlamaIndexRAGService:
                     response_mode="compact",
                 )
 
-            logger.info(f"Executing LlamaIndex query...")
+            logger.info("Executing LlamaIndex query...")
             result = query_engine.query(question)
             
             # Extract answer
             answer = str(getattr(result, "response", result))
-            logger.info(f"LlamaIndex query completed, answer length: {len(answer)}")
+            logger.info("LlamaIndex query completed, answer length: %s", len(answer))
 
             # Extract sources if available
             sources: list[SourceAttribution] = []
@@ -381,13 +412,17 @@ class LlamaIndexRAGService:
                         )
                     )
             except Exception as e:
-                logger.warning(f"Error extracting sources: {e}")
+                logger.warning("Error extracting sources: %s", e)
 
             return RAGResponse(answer=answer, sources=sources)
 
         except ImportError as e:
-            logger.error(f"LlamaIndex import failed: {e}")
-            raise RuntimeError("LlamaIndex dependencies not installed. Run: pip install llama-index-core llama-index-vector-stores-chroma llama-index-llms-ollama") from e
+            logger.error("LlamaIndex import failed: %s", e)
+            raise RuntimeError(
+                "LlamaIndex dependencies not installed. Run: "
+                "pip install llama-index-core llama-index-vector-stores-chroma "
+                "llama-index-llms-ollama"
+            ) from e
         except Exception as e:
             logger.error(f"LlamaIndex RAG query failed: {e}", exc_info=True)
             # If we have a fallback RAG service, use it instead of raising

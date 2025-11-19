@@ -108,7 +108,10 @@ class LlamaCppBackend:
 
     def _ensure_model(self) -> Llama:
         if Llama is None:
-            raise ImportError("llama-cpp-python is required for llama-cpp backend. Install via pip install llama-cpp-python")
+            raise ImportError(
+                "llama-cpp-python is required for llama-cpp backend. "
+                "Install via pip install llama-cpp-python"
+            )
         if self._llama is None:
             self._llama = Llama(
                 model_path=str(self.model_path),
@@ -143,7 +146,10 @@ class OnnxRuntimeBackend:
     @cached_property
     def _model(self):
         if og is None:
-            raise ImportError("onnxruntime-genai is required for the ONNX backend. Install via pip install onnxruntime-genai")
+            raise ImportError(
+                "onnxruntime-genai is required for the ONNX backend. "
+                "Install via pip install onnxruntime-genai"
+            )
         return og.Model(str(self.model_path))
 
     @cached_property

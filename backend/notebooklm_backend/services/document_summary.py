@@ -97,9 +97,13 @@ class DocumentSummaryService:
             return "research_paper"
         elif any(term in summary_lower or term in path_lower for term in ["contract", "agreement", "legal"]):
             return "contract"
-        elif any(term in summary_lower or term in path_lower for term in ["code", "programming", "software", ".py", ".js"]):
+
+        code_terms = ["code", "programming", "software", ".py", ".js"]
+        if any(term in summary_lower or term in path_lower for term in code_terms):
             return "code"
-        elif any(term in summary_lower or term in path_lower for term in ["presentation", "slides", ".pptx", ".ppt"]):
+
+        presentation_terms = ["presentation", "slides", ".pptx", ".ppt"]
+        if any(term in summary_lower or term in path_lower for term in presentation_terms):
             return "presentation"
-        
+
         return None
