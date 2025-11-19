@@ -54,7 +54,12 @@ class ChatService:
                     if n > 0:
                         recent = list(history)[-2 * n:]
                         recent_context = "\n".join([f"{msg.role}: {msg.content}" for msg in recent])
-                        full_question = f"Previous conversation (last {n} turn{'s' if n>1 else ''}):\n{recent_context}\n\nCurrent question: {prompt}"
+                        plural = "s" if n > 1 else ""
+                        full_question = (
+                            "Previous conversation (last "
+                            f"{n} turn{plural}):\n"
+                            f"{recent_context}\n\nCurrent question: {prompt}"
+                        )
                 
                 rag_result = await self._rag_service.query(notebook_id=notebook_id, question=full_question, top_k=20)
                 if rag_result.metrics:
@@ -102,7 +107,11 @@ class ChatService:
                 if history:
                     recent_context = "\n".join([f"{msg.role}: {msg.content}" for msg in list(history)[-3:]])
                     full_question = f"Previous conversation:\n{recent_context}\n\nCurrent question: {prompt}"
-                context = await self._rag_service.prepare_prompt(notebook_id=notebook_id, question=full_question, top_k=20)
+                context = await self._rag_service.prepare_prompt(
+                    notebook_id=notebook_id,
+                    question=full_question,
+                    top_k=20,
+                )
                 metrics.update(context.metrics)
                 prompt_text = context.prompt or None
                 sources = self._format_sources(context.sources)

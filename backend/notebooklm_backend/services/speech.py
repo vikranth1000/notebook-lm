@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO
 
 from ..config import AppConfig
 
@@ -49,7 +47,10 @@ class SpeechService:
         model_path = self.settings.models_dir / "piper" / "en_US-amy-medium.onnx"
         model_path.parent.mkdir(parents=True, exist_ok=True)
         if not model_path.exists():
-            raise SpeechUnavailableError(f"TTS model missing: {model_path}. Download a Piper voice model and place it there.")
+            raise SpeechUnavailableError(
+                f"TTS model missing: {model_path}. "
+                "Download a Piper voice model and place it there."
+            )
 
         synthesizer = piper.load(model_path, config_path=None)
         audio = synthesizer(text)

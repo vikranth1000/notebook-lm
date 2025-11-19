@@ -88,11 +88,12 @@ class VectorStoreManager:
         
         # Embed the summary for similarity search
         summary_embedding = self.embedding_backend.embed([summary.summary])
-        
+
         # Store summary with metadata
         import hashlib
         # Use a stable, notebook-scoped summary id to avoid collisions/overwrites
-        sid = hashlib.md5(f"{notebook_id}:{summary.source_path}:{summary.chunk_count}:{summary.summary[:64]}".encode()).hexdigest()
+        sid_input = f"{notebook_id}:{summary.source_path}:{summary.chunk_count}:{summary.summary[:64]}"
+        sid = hashlib.md5(sid_input.encode()).hexdigest()
         summaries_collection.add(
             ids=[sid],
             documents=[summary.summary],

@@ -4,7 +4,6 @@ import sqlite3
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
 
 from ..config import AppConfig
 from ..models.metrics import ChatMetricRecord, MetricsSummary
